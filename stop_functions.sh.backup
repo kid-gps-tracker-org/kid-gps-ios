@@ -1,0 +1,7 @@
+#!/bin/bash
+echo "🛑 Cloud Functionsを停止します..."
+firebase functions:delete fetchBusLocation --force
+firebase functions:delete cleanOldLocations --force
+firebase functions:delete checkSafeZone --force
+firebase functions:delete cleanupSafeZoneEvents --force
+echo "✅ 停止完了！お疲れ様でした！"
