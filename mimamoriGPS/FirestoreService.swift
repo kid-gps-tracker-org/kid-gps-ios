@@ -33,6 +33,20 @@ class FirestoreService: ObservableObject {
     private var listener: ListenerRegistration?
     private var safeZoneListener: ListenerRegistration?
     private var zoneEventListener: ListenerRegistration?
+    private var nrfCloudTimer: Timer?  // nRF Cloudポーリング用タイマー
+    
+    // MARK: - Data Source Selection
+    
+    /// nRF Cloudを使用するかどうか
+    var useNRFCloud: Bool {
+        return UserDefaults.standard.bool(forKey: "use_nrf_cloud")
+    }
+    
+    /// データソースを切り替え
+    func setDataSource(useNRFCloud: Bool) {
+        UserDefaults.standard.set(useNRFCloud, forKey: "use_nrf_cloud")
+        print("📍 データソース切り替え: \(useNRFCloud ? "nRF Cloud" : "公共交通DB")")
+    }
     
     // MARK: - Singleton
     static let shared = FirestoreService()
@@ -44,6 +58,18 @@ class FirestoreService: ObservableObject {
         isLoading = true
         errorMessage = nil
         
+        if useNRFCloud {
+            // nRF Cloudからポーリング
+            startNRFCloudPolling()
+        } else {
+            // 公共交通DBから監視（既存）
+            startFirestoreListener()
+        }
+    }
+    
+    // MARK: - Firestore Listener (既存の公共交通DB)
+    
+    private func startFirestoreListener() {
         print("🚀 Firebase監視開始...")
         print("   コレクション: latest_bus_location")
         print("   ドキュメント: current")
@@ -190,10 +216,215 @@ class FirestoreService: ObservableObject {
         }
     }
     
+    // MARK: - nRF Cloud Polling
+    
+    /// nRF Cloudからのポーリングを開始
+    private func startNRFCloudPolling() {
+        print("🚀 nRF Cloud ポーリング開始...")
+        
+        // 設定確認
+        guard NRFCloudConfig.isConfigured() else {
+            errorMessage = "nRF Cloudの設定が必要です。設定画面でAPI KeyとDevice IDを入力してください。"
+            isLoading = false
+            return
+        }
+        
+        // 初回取得
+        Task {
+            await fetchLocationFromNRFCloud()
+        }
+        
+        // 60秒ごとにポーリング
+        nrfCloudTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.fetchLocationFromNRFCloud()
+            }
+        }
+        
+        print("✅ nRF Cloud ポーリング開始（60秒間隔）")
+    }
+    
+    /// nRF Cloud APIから位置情報を取得
+    @MainActor
+    private func fetchLocationFromNRFCloud() async {
+        let apiKey = NRFCloudConfig.apiKey
+        let deviceID = NRFCloudConfig.deviceID
+        
+        guard !apiKey.isEmpty, !deviceID.isEmpty else {
+            errorMessage = "nRF Cloud設定が未完了です"
+            isLoading = false
+            return
+        }
+        
+        // nRF Cloud REST API呼び出し（最新20件を取得してGNSSデータを探す）
+        let urlString = "https://api.nrfcloud.com/v1/location/history?deviceId=\(deviceID)&pageLimit=20"
+        
+        guard let url = URL(string: urlString) else {
+            errorMessage = "無効なURL"
+            isLoading = false
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        print("🌐 nRF Cloud API Request: GET \(urlString)")
+        print("🔑 Authorization: Bearer \(apiKey.prefix(20))...")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                errorMessage = "サーバーからの応答が無効です"
+                isLoading = false
+                return
+            }
+            
+            print("📡 nRF Cloud API Response: \(httpResponse.statusCode)")
+            
+            guard httpResponse.statusCode == 200 else {
+                let errorBody = String(data: data, encoding: .utf8) ?? "不明なエラー"
+                errorMessage = "APIエラー (\(httpResponse.statusCode)): \(errorBody)"
+                isLoading = false
+                return
+            }
+            
+            // 🔍 レスポンスの生データをログ出力
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("📦 nRF Cloud レスポンス:")
+                print(jsonString)
+            }
+            
+            // JSONパース
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("❌ JSON解析失敗")
+                errorMessage = "JSON解析エラー"
+                isLoading = false
+                return
+            }
+            
+            print("✅ JSON解析成功")
+            
+            guard let items = json["items"] as? [[String: Any]] else {
+                print("❌ itemsキーなし")
+                errorMessage = "GPS データなし"
+                isLoading = false
+                return
+            }
+            
+            print("📊 items要素数: \(items.count)")
+            
+            // GNSSデータのみをフィルタリング
+            let gnssItems = items.filter { item in
+                if let serviceType = item["serviceType"] as? String {
+                    return serviceType == "GNSS"
+                }
+                return false
+            }
+            
+            print("📡 GNSS データ数: \(gnssItems.count)/\(items.count)")
+            
+            // GNSSデータがあればそれを使用、なければ最新のデータを使用
+            guard let item = gnssItems.first ?? items.first else {
+                print("❌ items配列が空")
+                errorMessage = "GPS データなし"
+                isLoading = false
+                return
+            }
+            
+            if let serviceType = item["serviceType"] as? String {
+                print("📍 使用する測位方式: \(serviceType)")
+            }
+            
+            print("📍 取得データ:")
+            for (key, value) in item {
+                print("  \(key): \(value)")
+            }
+            
+            // タイムスタンプの処理
+            let timestamp: Timestamp
+            if let ts = item["ts"] as? String {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                if let date = formatter.date(from: ts) {
+                    timestamp = Timestamp(date: date)
+                } else {
+                    timestamp = Timestamp(date: Date())
+                }
+            } else if let tsMillis = item["ts"] as? Int64 {
+                timestamp = Timestamp(date: Date(timeIntervalSince1970: Double(tsMillis) / 1000.0))
+            } else if let insertedAt = item["insertedAt"] as? String {
+                // insertedAtをフォールバックとして使用
+                let formatter = ISO8601DateFormatter()
+                if let date = formatter.date(from: insertedAt) {
+                    timestamp = Timestamp(date: date)
+                } else {
+                    timestamp = Timestamp(date: Date())
+                }
+            } else {
+                timestamp = Timestamp(date: Date())
+            }
+            
+            // 緯度経度の取得（文字列または数値に対応）
+            let latitude: Double
+            if let latDouble = item["lat"] as? Double {
+                latitude = latDouble
+            } else if let latString = item["lat"] as? String, let latDouble = Double(latString) {
+                latitude = latDouble
+            } else {
+                latitude = 0
+            }
+            
+            let longitude: Double
+            if let lonDouble = item["lon"] as? Double {  // ⚠️ "lng"ではなく"lon"
+                longitude = lonDouble
+            } else if let lonString = item["lon"] as? String, let lonDouble = Double(lonString) {
+                longitude = lonDouble
+            } else {
+                longitude = 0
+            }
+            
+            print("🌍 パース結果: lat=\(latitude), lon=\(longitude)")
+            
+            // BusLocationに変換
+            let busLocation = BusLocation(
+                id: UUID().uuidString,
+                latitude: latitude,
+                longitude: longitude,
+                timestamp: timestamp,
+                speed: item["spd"] as? Double,
+                azimuth: item["hdg"] as? Double,
+                fromBusstopPole: nil,
+                toBusstopPole: nil,
+                busOperator: "nRF Device",
+                busRoute: deviceID
+            )
+            
+            self.currentBusLocation = busLocation
+            self.errorMessage = nil
+            self.isLoading = false
+            
+            print("✅ nRF Cloud 位置情報取得成功: (\(busLocation.latitude), \(busLocation.longitude))")
+            
+            if let speed = busLocation.speed {
+                print("🚀 速度: \(speed.toFixed(1)) km/h")
+            }
+            
+        } catch {
+            errorMessage = "位置情報取得エラー: \(error.localizedDescription)"
+            isLoading = false
+            print("❌ nRF Cloud API エラー: \(error)")
+        }
+    }
+    
     /// リアルタイム監視を停止
     func stopListening() {
         listener?.remove()
         listener = nil
+        nrfCloudTimer?.invalidate()
+        nrfCloudTimer = nil
         print("🛑 バス位置監視停止")
     }
     

@@ -17,6 +17,12 @@ struct ContentView: View {
     // FirestoreServiceを共有するために
     @StateObject private var firestoreService = FirestoreService()
     
+    // データソース選択
+    @AppStorage("use_nrf_cloud") private var useNRFCloud: Bool = false
+    
+    // nRF Cloud設定画面の表示
+    @State private var showNRFSettings = false
+    
     // デバッグ用のエラー状態
     @State private var debugError: String?
     
@@ -58,7 +64,10 @@ struct ContentView: View {
     }
     
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
+            // データソース切り替えバー
+            dataSourceSelectorBar
+            
             // デバッグ情報を表示
             if let debugError = debugError {
                 Text("Debug Error: \(debugError)")
@@ -143,6 +152,65 @@ struct ContentView: View {
             // Firebase接続テスト
             testFirebaseConnection()
         }
+        .sheet(isPresented: $showNRFSettings) {
+            NRFCloudSettingsView()
+        }
+        .onChange(of: useNRFCloud) { _, newValue in
+            handleDataSourceChange(newValue)
+        }
+        }
+    }
+    
+    // MARK: - Data Source Selector Bar
+    
+    /// データソース選択バー
+    private var dataSourceSelectorBar: some View {
+        HStack(spacing: 12) {
+            // データソース切り替えピッカー
+            Picker("データソース", selection: $useNRFCloud) {
+                Text("公共交通").tag(false)
+                Text("nRF Cloud").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: useNRFCloud) { _, newValue in
+                firestoreService.setDataSource(useNRFCloud: newValue)
+            }
+            
+            // nRF Cloud設定ボタン
+            if useNRFCloud {
+                Button {
+                    showNRFSettings = true
+                } label: {
+                    Image(systemName: NRFCloudConfig.isConfigured() ? "gear.badge.checkmark" : "gear.badge.exclamationmark")
+                        .foregroundColor(NRFCloudConfig.isConfigured() ? .blue : .orange)
+                        .imageScale(.large)
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color(.systemGroupedBackground))
+    }
+    
+    // MARK: - Data Source Management
+    
+    /// データソース変更時の処理
+    private func handleDataSourceChange(_ useNRF: Bool) {
+        print("📍 データソース切り替え: \(useNRF ? "nRF Cloud" : "公共交通DB")")
+        
+        // 既存の監視を停止
+        firestoreService.stopListening()
+        
+        // 新しいデータソースで開始
+        if useNRF {
+            // nRF Cloud設定チェック
+            if !NRFCloudConfig.isConfigured() {
+                showNRFSettings = true
+            } else {
+                firestoreService.startListening()
+            }
+        } else {
+            firestoreService.startListening()
         }
     }
     
