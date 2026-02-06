@@ -2,79 +2,61 @@
 //  BusLocation.swift
 //  mimamoriGPS
 //
-//  Firestoreのバス位置データモデル
+//  デバイス位置情報モデル（Firebase削除版）
 //
 
 import Foundation
-import FirebaseFirestore
-import SwiftUI  // 🆕 追加
+import CoreLocation
+import SwiftUI
 
 struct BusLocation: Identifiable, Codable, Equatable {
-    @DocumentID var id: String?
-    let latitude: Double
-    let longitude: Double
-    let timestamp: Timestamp
-    let speed: Double?
-    let azimuth: Double?
-    let fromBusstopPole: String?
-    let toBusstopPole: String?
-    let busOperator: String?
-    let busRoute: String?
+    var id: String
+    var latitude: Double
+    var longitude: Double
+    var timestamp: Timestamp
+    var speed: Double?
+    var azimuth: Double?
+    var fromBusstopPole: String?
+    var toBusstopPole: String?
+    var busOperator: String?
+    var busRoute: String?
     
-    // 地図表示用に座標を返す
-    var coordinate: (latitude: Double, longitude: Double) {
-        return (latitude, longitude)
+    // MARK: - Computed Properties
+    
+    /// CLLocationCoordinate2D に変換
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
     
-    // タイムスタンプをDateに変換
+    /// タイムスタンプをDateに変換
     var date: Date {
-        return timestamp.dateValue()
+        timestamp.dateValue()
     }
     
-    // デバッグ用
-    var description: String {
-        return """
-        緯度: \(latitude)
-        経度: \(longitude)
-        時刻: \(date)
-        速度: \(speed ?? 0) km/h
-        """
+    /// 速度から移動モードを判定
+    var transportMode: TransportMode {
+        guard let speed = speed else { return .walking }  // speedがない場合は徒歩とみなす
+        return speed < 10 ? .walking : .vehicle
     }
+    
+    /// マーカーの色（速度ベース）
+    var markerColor: Color {
+        return transportMode == .walking ? .blue : .red
+    }
+    
+    enum TransportMode {
+        case walking
+        case vehicle
+        case unknown
+    }
+    
     // MARK: - Equatable
-        
+    
     static func == (lhs: BusLocation, rhs: BusLocation) -> Bool {
         return lhs.id == rhs.id &&
                lhs.latitude == rhs.latitude &&
-               lhs.longitude == rhs.longitude &&
-               lhs.timestamp.dateValue() == rhs.timestamp.dateValue()
+               lhs.longitude == rhs.longitude
     }
 }
 
-// MARK: - Transport Mode Detection
 
-extension BusLocation {
-    /// 移動手段の判定
-    enum TransportMode {
-        case walking  // 徒歩 (0-10 km/h)
-        case vehicle  // 乗り物 (10+ km/h)
-    }
-    
-    /// 速度から移動手段を判定
-    var transportMode: TransportMode {
-        guard let speed = speed else {
-            return .walking  // 速度不明の場合は徒歩扱い
-        }
-        
-        return speed < 10.0 ? .walking : .vehicle
-    }
-    
-    /// マーカー色を取得
-    var markerColor: Color {
-        switch transportMode {
-        case .walking:
-            return .blue  // 🔵 徒歩: 青
-        case .vehicle:
-            return .red   // 🔴 乗り物: 赤
-        }
-    }
-}

@@ -2,73 +2,98 @@
 //  SafeZone.swift
 //  mimamoriGPS
 //
-//  セーフゾーンのデータモデル
+//  セーフゾーンのデータモデル（Firebase削除版 - AWS API専用）
 //
 
 import Foundation
-import FirebaseFirestore
 import CoreLocation
 
 struct SafeZone: Identifiable, Codable, Equatable {
-    @DocumentID var id: String?
+    var id: String
     var name: String
-    var center: GeoPoint
+    var centerLat: Double
+    var centerLon: Double
     var radius: Double
-    var childId: String
-    var createdBy: String
-    var color: String
-    var icon: String?
-    var isActive: Bool
-    @ServerTimestamp var createdAt: Timestamp?
-    @ServerTimestamp var updatedAt: Timestamp?
+    var enabled: Bool
+    var createdAt: Date
+    var updatedAt: Date
+    var color: String // UIでの表示色（HEX形式）
     
     // MARK: - Computed Properties
     
     /// 中心座標をCLLocationCoordinate2Dで返す
     var centerCoordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(
-            latitude: center.latitude,
-            longitude: center.longitude
-        )
+        CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
     }
     
-    /// UIColorに変換
-    var uiColor: UIColor {
-        UIColor(hex: color) ?? .systemBlue
+    /// Coordinate型で返す（AWS API用）
+    var center: Coordinate {
+        Coordinate(lat: centerLat, lon: centerLon)
     }
     
     /// 作成日時
-    var createdDate: Date? {
-        createdAt?.dateValue()
+    var createdDate: Date {
+        createdAt
     }
     
     /// 更新日時
-    var updatedDate: Date? {
-        updatedAt?.dateValue()
+    var updatedDate: Date {
+        updatedAt
     }
     
     // MARK: - Initializer
     
     init(
-        id: String? = nil,
+        id: String = UUID().uuidString,
         name: String,
-        center: GeoPoint,
+        centerLat: Double,
+        centerLon: Double,
         radius: Double,
-        childId: String,
-        createdBy: String,
-        color: String = "#0000FF",
-        icon: String? = "home",
-        isActive: Bool = true
+        enabled: Bool = true,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        color: String = "#0000FF" // デフォルトは青
     ) {
         self.id = id
         self.name = name
-        self.center = center
+        self.centerLat = centerLat
+        self.centerLon = centerLon
         self.radius = radius
-        self.childId = childId
-        self.createdBy = createdBy
+        self.enabled = enabled
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
         self.color = color
-        self.icon = icon
-        self.isActive = isActive
+    }
+    
+    /// APISafeZoneから変換
+    init(from apiZone: APISafeZone) {
+        self.id = apiZone.zoneId
+        self.name = apiZone.name
+        self.centerLat = apiZone.center.lat
+        self.centerLon = apiZone.center.lon
+        self.radius = apiZone.radius
+        self.enabled = apiZone.enabled
+        self.createdAt = apiZone.createdDate ?? Date()
+        self.updatedAt = apiZone.updatedDate ?? Date()
+        self.color = "#0000FF" // デフォルトの青
+    }
+    
+    /// CLLocationCoordinate2Dから初期化
+    init(
+        id: String = UUID().uuidString,
+        name: String,
+        center: CLLocationCoordinate2D,
+        radius: Double,
+        enabled: Bool = true
+    ) {
+        self.init(
+            id: id,
+            name: name,
+            centerLat: center.latitude,
+            centerLon: center.longitude,
+            radius: radius,
+            enabled: enabled
+        )
     }
     
     // MARK: - Equatable
@@ -76,53 +101,25 @@ struct SafeZone: Identifiable, Codable, Equatable {
     static func == (lhs: SafeZone, rhs: SafeZone) -> Bool {
         return lhs.id == rhs.id &&
                lhs.name == rhs.name &&
-               lhs.center.latitude == rhs.center.latitude &&
-               lhs.center.longitude == rhs.center.longitude &&
+               lhs.centerLat == rhs.centerLat &&
+               lhs.centerLon == rhs.centerLon &&
                lhs.radius == rhs.radius
     }
 }
 
-// MARK: - GeoPoint Extension
+// MARK: - SafeZone Extensions
 
-extension GeoPoint {
-    /// CLLocationCoordinate2Dから初期化
-    convenience init(_ coordinate: CLLocationCoordinate2D) {
-        self.init(latitude: coordinate.latitude, longitude: coordinate.longitude)
-    }
-}
-
-// MARK: - UIColor Extension
-
-extension UIColor {
-    /// HEX文字列からUIColorを生成
-    convenience init?(hex: String) {
-        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
-        
-        var rgb: UInt64 = 0
-        Scanner(string: hexSanitized).scanHexInt64(&rgb)
-        
-        let r = CGFloat((rgb & 0xFF0000) >> 16) / 255.0
-        let g = CGFloat((rgb & 0x00FF00) >> 8) / 255.0
-        let b = CGFloat(rgb & 0x0000FF) / 255.0
-        
-        self.init(red: r, green: g, blue: b, alpha: 1.0)
+extension SafeZone {
+    /// 指定した座標がセーフゾーン内にあるか判定
+    func contains(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        let center = CLLocation(latitude: centerLat, longitude: centerLon)
+        let target = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let distance = center.distance(from: target)
+        return distance <= radius
     }
     
-    /// UIColorをHEX文字列に変換
-    var hexString: String {
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 0
-        
-        getRed(&r, green: &g, blue: &b, alpha: &a)
-        
-        return String(
-            format: "#%02X%02X%02X",
-            Int(r * 255),
-            Int(g * 255),
-            Int(b * 255)
-        )
+    /// Location型で判定
+    func contains(_ location: Location) -> Bool {
+        return contains(location.coordinate)
     }
 }

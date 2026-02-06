@@ -2,12 +2,11 @@
 //  SafeZoneEditView.swift
 //  mimamoriGPS
 //
-//  セーフゾーン編集画面（簡素化版）
+//  セーフゾーン編集画面（簡素化版・Firebase削除版）
 //
 
 import SwiftUI
 import MapKit
-import FirebaseFirestore
 
 struct SafeZoneEditView: View {
     // MARK: - Properties
@@ -291,14 +290,13 @@ struct SafeZoneEditView: View {
         guard let location = selectedLocation else { return }
         
         let newZone = SafeZone(
-            id: safeZone?.id,
+            id: safeZone?.id ?? UUID().uuidString,
             name: name,
-            center: GeoPoint(location),
+            centerLat: location.latitude,
+            centerLon: location.longitude,
             radius: radius,
-            childId: childId,
-            createdBy: "current-user",
-            color: "#007AFF",  // 青色固定
-            isActive: true
+            enabled: true,
+            color: "#007AFF"  // 青色固定
         )
         
         if isEditing {

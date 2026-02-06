@@ -2,19 +2,18 @@
 //  ZoneEvent.swift
 //  mimamoriGPS
 //
-//  セーフゾーン入退場イベントのモデル
+//  セーフゾーン入退場イベントのモデル（Firebase削除版）
 //
 
 import Foundation
-import FirebaseFirestore
 
 struct ZoneEvent: Identifiable, Codable {
-    @DocumentID var id: String?
+    var id: String?
     var safeZoneId: String
     var safeZoneName: String
     var childId: String
     var eventType: EventType
-    var timestamp: Timestamp
+    var timestamp: Date
     var location: GeoPoint
     var notificationSent: Bool
     
@@ -27,7 +26,7 @@ struct ZoneEvent: Identifiable, Codable {
     
     /// イベント日時
     var date: Date {
-        timestamp.dateValue()
+        timestamp
     }
     
     /// イベントの説明

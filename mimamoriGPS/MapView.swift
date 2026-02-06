@@ -2,19 +2,18 @@
 //  MapView.swift
 //  mimamoriGPS
 //
-//  バス位置を地図に表示
+//  デバイス位置を地図に表示（Firebase削除版）
 //
 
 import SwiftUI
 import MapKit
-import FirebaseFirestore
 
 struct MapView: View {
     let selectedDate: Date
     @ObservedObject var firestoreService: FirestoreService
     @Binding var mapCenter: CLLocationCoordinate2D  // 地図の中心位置をバインディング
     
-    let childId: String = "test-child-001" // TODO: 実際のchildIdを使用
+    let childId: String  // Device IDを外部から受け取る
     
     // 選択された軌跡の位置情報
     @State private var selectedLocation: BusLocation?
@@ -37,10 +36,11 @@ struct MapView: View {
     @State private var hasInitializedMarker: Bool = false  // マーカー初期化済みフラグ
     
     // 初期化時に地図の中心位置を設定
-    init(selectedDate: Date, firestoreService: FirestoreService, mapCenter: Binding<CLLocationCoordinate2D>) {
+    init(selectedDate: Date, firestoreService: FirestoreService, mapCenter: Binding<CLLocationCoordinate2D>, childId: String) {
         self.selectedDate = selectedDate
         self.firestoreService = firestoreService
         self._mapCenter = mapCenter
+        self.childId = childId
         
         // 地図の初期表示範囲を設定
         self._region = State(initialValue: MKCoordinateRegion(
@@ -432,13 +432,57 @@ struct BusMarker: View {
 struct BusInfoCard: View {
     let location: BusLocation
     
+    // 設定から表示名を取得
+    private var deviceDisplayName: String {
+        UserDefaults.standard.string(forKey: "device_display_name") ?? "デバイス"
+    }
+    
+    // データが古いかチェック（1時間以上更新されていない場合）
+    private var isDataStale: Bool {
+        let timeSinceUpdate = Date().timeIntervalSince(location.date)
+        return timeSinceUpdate > 3600 // 1時間 = 3600秒
+    }
+    
+    // データの古さを表示用テキストに変換
+    private var dataAgeText: String {
+        let timeSinceUpdate = Date().timeIntervalSince(location.date)
+        let hours = Int(timeSinceUpdate / 3600)
+        let days = hours / 24
+        
+        if days > 0 {
+            return "\(days)日前"
+        } else if hours > 0 {
+            return "\(hours)時間前"
+        } else {
+            return "最新"
+        }
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Image(systemName: "bus.fill")
+                Image(systemName: "person.fill")
                     .foregroundColor(.blue)
-                Text("横浜市営バス 034系統")
+                Text(deviceDisplayName)
                     .font(.headline)
+            }
+            
+            // データ更新警告
+            if isDataStale {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.caption)
+                    Text("データが\(dataAgeText)更新されていません")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.orange.opacity(0.1))
+                )
             }
             
             // 時刻と速度を横並びに配置
@@ -713,15 +757,15 @@ struct SafeZoneCircle: View {
     
     var body: some View {
         let center = convertToScreenPoint(
-            latitude: zone.center.latitude,
-            longitude: zone.center.longitude,
+            latitude: zone.centerLat,
+            longitude: zone.centerLon,
             region: region,
             size: geometry.size
         )
         
         let radius = metersToPixels(
             meters: zone.radius,
-            latitude: zone.center.latitude,
+            latitude: zone.centerLat,
             region: region,
             screenHeight: geometry.size.height
         )
@@ -729,12 +773,12 @@ struct SafeZoneCircle: View {
         ZStack {
             // 塗りつぶし円
             Circle()
-                .fill(Color(zone.uiColor).opacity(0.2))
+                .fill(Color(hex: zone.color).opacity(0.2))
                 .frame(width: radius * 2, height: radius * 2)
             
             // 枠線
             Circle()
-                .stroke(Color(zone.uiColor), lineWidth: 2)
+                .stroke(Color(hex: zone.color), lineWidth: 2)
                 .frame(width: radius * 2, height: radius * 2)
         }
         .position(center)
@@ -858,6 +902,7 @@ struct LocationDetailOverlay: View {
     MapView(
         selectedDate: Date(),
         firestoreService: FirestoreService(),
-        mapCenter: .constant(CLLocationCoordinate2D(latitude: 35.4437, longitude: 139.6380))
+        mapCenter: .constant(CLLocationCoordinate2D(latitude: 35.4437, longitude: 139.6380)),
+        childId: "nrf-359404230006463"
     )
 }
