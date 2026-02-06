@@ -2,12 +2,39 @@
 //  FirestoreService.swift
 //  mimamoriGPS
 //
-//  Firestoreからバス位置データを取得
+//  AWS REST APIからデバイス位置データを取得（Firebase削除版）
 //
 
 import Foundation
-import FirebaseFirestore
 import Combine
+
+// MARK: - Firebase置き換え型定義
+
+/// GeoPoint構造体（Firebase不要版）
+struct GeoPoint: Codable, Hashable {
+    let latitude: Double
+    let longitude: Double
+    
+    init(latitude: Double, longitude: Double) {
+        self.latitude = latitude
+        self.longitude = longitude
+    }
+}
+
+/// Timestamp構造体（Firebase不要版）
+struct Timestamp: Codable, Hashable {
+    let seconds: Int64
+    let nanoseconds: Int32
+    
+    init(date: Date) {
+        self.seconds = Int64(date.timeIntervalSince1970)
+        self.nanoseconds = Int32((date.timeIntervalSince1970.truncatingRemainder(dividingBy: 1)) * 1_000_000_000)
+    }
+    
+    func dateValue() -> Date {
+        return Date(timeIntervalSince1970: Double(seconds) + Double(nanoseconds) / 1_000_000_000)
+    }
+}
 
 // MARK: - Extensions
 
@@ -29,142 +56,32 @@ class FirestoreService: ObservableObject {
     @Published var zoneEvents: [ZoneEvent] = []
     
     // MARK: - Private Properties
-    private var db = Firestore.firestore()
-    private var listener: ListenerRegistration?
-    private var safeZoneListener: ListenerRegistration?
-    private var zoneEventListener: ListenerRegistration?
-    private var nrfCloudTimer: Timer?  // nRF Cloudポーリング用タイマー
-    
-    // MARK: - Data Source Selection
-    
-    /// nRF Cloudを使用するかどうか
-    var useNRFCloud: Bool {
-        return UserDefaults.standard.bool(forKey: "use_nrf_cloud")
-    }
-    
-    /// データソースを切り替え
-    func setDataSource(useNRFCloud: Bool) {
-        UserDefaults.standard.set(useNRFCloud, forKey: "use_nrf_cloud")
-        print("📍 データソース切り替え: \(useNRFCloud ? "nRF Cloud" : "公共交通DB")")
-    }
+    private var pollingTimer: Timer?  // ポーリング用タイマー
+    private var safeZonePollingTimer: Timer?
+    private var zoneEventPollingTimer: Timer?
     
     // MARK: - Singleton
     static let shared = FirestoreService()
     
     // MARK: - Public Methods
     
-    /// バス位置のリアルタイム監視を開始
+    /// バス位置のリアルタイム監視を開始（AWS API専用）
     func startListening() {
         isLoading = true
         errorMessage = nil
         
-        if useNRFCloud {
-            // nRF Cloudからポーリング
-            startNRFCloudPolling()
-        } else {
-            // 公共交通DBから監視（既存）
-            startFirestoreListener()
-        }
+        // 常にAWS APIからポーリング
+        startAWSPolling()
     }
     
-    // MARK: - Firestore Listener (既存の公共交通DB)
-    
-    private func startFirestoreListener() {
-        print("🚀 Firebase監視開始...")
-        print("   コレクション: latest_bus_location")
-        print("   ドキュメント: current")
-        
-        // Firestoreの最新位置ドキュメントを監視
-        listener = db.collection("latest_bus_location")
-            .document("current")
-            .addSnapshotListener { [weak self] documentSnapshot, error in
-                guard let self = self else { return }
-                
-                print("📡 Firestore レスポンス受信")
-                self.isLoading = false
-                
-                // エラーハンドリング
-                if let error = error {
-                    print("❌ Firebase接続エラー: \(error)")
-                    self.handleFirestoreError(error: error, operation: "バス位置取得")
-                    return
-                }
-                
-                // ドキュメントが存在するか確認
-                guard let document = documentSnapshot else {
-                    print("❌ ドキュメントスナップショットがnull")
-                    self.errorMessage = "データ取得に失敗しました"
-                    return
-                }
-                
-                print("📄 ドキュメント存在確認: \(document.exists)")
-                
-                if !document.exists {
-                    self.errorMessage = "バス位置データが見つかりません。\nサーバー側の処理を確認してください。"
-                    print("⚠️ Document does not exist - Cloud Functions may be stopped")
-                    return
-                }
-                
-                // データの内容をログ出力
-                if let data = document.data() {
-                    print("📋 取得データ:")
-                    for (key, value) in data {
-                        print("   \(key): \(value)")
-                    }
-                } else {
-                    print("⚠️ データが空です")
-                }
-                
-                // データの新しさを確認（5分以内のデータのみ有効）
-                if let data = document.data(),
-                   let timestamp = data["timestamp"] as? Timestamp {
-                    let dataAge = Date().timeIntervalSince(timestamp.dateValue())
-                    print("⏰ データ経過時間: \(Int(dataAge))秒")
-                    if dataAge > 300 { // 5分 = 300秒
-                        self.errorMessage = "データが古すぎます（\(Int(dataAge/60))分前）"
-                        print("⚠️ Stale data: \(dataAge) seconds old")
-                        return
-                    }
-                }
-                
-                // データをBusLocationモデルに変換
-                do {
-                    let location = try document.data(as: BusLocation.self)
-                    self.currentBusLocation = location
-                    self.errorMessage = nil
-                    print("✅ バス位置取得成功: \(location.coordinate)")
-                    
-                    // 速度情報をログ出力
-                    if let speed = location.speed {
-                        print("🚀 現在速度: \(speed.toFixed(1)) km/h (\(location.transportMode == .walking ? "徒歩" : "乗り物"))")
-                    }
-                } catch {
-                    self.errorMessage = "データ変換エラー: \(error.localizedDescription)"
-                    print("❌ Decoding Error: \(error)")
-                    print("   エラー詳細: \(error)")
-                }
-            }
+    /// リアルタイム監視を停止
+    func stopListening() {
+        pollingTimer?.invalidate()
+        pollingTimer = nil
+        print("🛑 デバイス位置監視停止")
     }
     
-    // MARK: - Private Helper Methods
-    
-    /// Firestoreエラーの統一処理
-    private func handleFirestoreError(error: Error, operation: String) {
-        let nsError = error as NSError
-        
-        switch nsError.code {
-        case 7: // PERMISSION_DENIED
-            errorMessage = "アクセス権限がありません。設定を確認してください。"
-        case 14: // UNAVAILABLE
-            errorMessage = "ネットワーク接続を確認してください。"
-        case 4: // DEADLINE_EXCEEDED
-            errorMessage = "通信がタイムアウトしました。"
-        default:
-            errorMessage = "\(operation)エラー: \(error.localizedDescription)"
-        }
-        
-        print("❌ \(operation) Error (\(nsError.code)): \(error.localizedDescription)")
-    }
+    // MARK: - 履歴取得（AWS API版）
     
     /// 指定した日付の位置履歴を取得(0時〜23時59分59秒)
     func fetchLocationHistory(for date: Date = Date()) {
@@ -189,397 +106,342 @@ class FirestoreService: ObservableObject {
         print("   開始: \(startOfDay)")
         print("   終了: \(endOfDay)")
         
-        db.collection("bus_locations")
-            .whereField("timestamp", isGreaterThanOrEqualTo: Timestamp(date: startOfDay))
-            .whereField("timestamp", isLessThanOrEqualTo: Timestamp(date: endOfDay))
-            .order(by: "timestamp", descending: false) // 古い順に取得
-            .addSnapshotListener { [weak self] querySnapshot, error in
-                guard let self = self else { return }
+        guard let deviceId = getDeviceId() else {
+            print("❌ Device IDが設定されていません")
+            locationHistory = []
+            return
+        }
+        
+        // AWS APIから履歴データを取得
+        Task {
+            do {
+                let response = try await AWSNetworkService.shared.getHistory(
+                    deviceId: deviceId,
+                    type: nil,  // 全てのタイプを取得（位置情報と温度）
+                    start: startOfDay,
+                    end: endOfDay,
+                    limit: 1000
+                )
+                
+                // HistoryEntry → BusLocation に変換
+                let busLocations = response.history.compactMap { entry -> BusLocation? in
+                    // 位置情報のみ（温度データを除外）
+                    guard entry.messageType != .temp,
+                          let lat = entry.lat,
+                          let lon = entry.lon else {
+                        return nil
+                    }
                     
-                if let error = error {
-                    print("❌ 履歴取得エラー: \(error)")
-                    return
+                    return BusLocation(
+                        id: UUID().uuidString,
+                        latitude: lat,
+                        longitude: lon,
+                        timestamp: Timestamp(date: entry.date ?? Date()),
+                        speed: nil,
+                        azimuth: nil,
+                        fromBusstopPole: nil,
+                        toBusstopPole: nil,
+                        busOperator: "nRF Device",
+                        busRoute: deviceId
+                    )
                 }
-                    
-                guard let documents = querySnapshot?.documents else {
-                    print("⚠️ 履歴データが見つかりません")
+                
+                await MainActor.run {
+                    self.locationHistory = busLocations
+                    print("✅ 履歴データ取得: \(busLocations.count)件(\(dateString))")
+                }
+                
+            } catch {
+                print("❌ 履歴取得エラー: \(error)")
+                await MainActor.run {
                     self.locationHistory = []
-                    return
                 }
-                    
-                // ドキュメントをBusLocationモデルに変換
-                self.locationHistory = documents.compactMap { document in
-                    try? document.data(as: BusLocation.self)
-                }
-                    
-                print("✅ 履歴データ取得: \(self.locationHistory.count)件(\(dateString))")
+            }
         }
     }
     
-    // MARK: - nRF Cloud Polling
+    // MARK: - AWS REST API Polling
     
-    /// nRF Cloudからのポーリングを開始
-    private func startNRFCloudPolling() {
-        print("🚀 nRF Cloud ポーリング開始...")
+    /// AWS REST APIからのポーリングを開始
+    private func startAWSPolling() {
+        print("🚀 AWS REST API ポーリング開始...")
         
         // 設定確認
-        guard NRFCloudConfig.isConfigured() else {
-            errorMessage = "nRF Cloudの設定が必要です。設定画面でAPI KeyとDevice IDを入力してください。"
+        guard AWSNetworkService.shared.isConfigured() else {
+            errorMessage = "AWS APIの設定が必要です。設定画面でBase URLとAPI Keyを入力してください。"
+            isLoading = false
+            return
+        }
+        
+        guard let deviceId = getDeviceId() else {
+            errorMessage = "Device IDが設定されていません"
             isLoading = false
             return
         }
         
         // 初回取得
         Task {
-            await fetchLocationFromNRFCloud()
+            await fetchLocationFromAWS(deviceId: deviceId)
         }
         
         // 60秒ごとにポーリング
-        nrfCloudTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                await self?.fetchLocationFromNRFCloud()
+                guard let self = self else { return }
+                await self.fetchLocationFromAWS(deviceId: deviceId)
             }
         }
-        
-        print("✅ nRF Cloud ポーリング開始（60秒間隔）")
     }
     
-    /// nRF Cloud APIから位置情報を取得
-    @MainActor
-    private func fetchLocationFromNRFCloud() async {
-        let apiKey = NRFCloudConfig.apiKey
-        let deviceID = NRFCloudConfig.deviceID
-        
-        guard !apiKey.isEmpty, !deviceID.isEmpty else {
-            errorMessage = "nRF Cloud設定が未完了です"
-            isLoading = false
-            return
-        }
-        
-        // nRF Cloud REST API呼び出し（最新20件を取得してGNSSデータを探す）
-        let urlString = "https://api.nrfcloud.com/v1/location/history?deviceId=\(deviceID)&pageLimit=20"
-        
-        guard let url = URL(string: urlString) else {
-            errorMessage = "無効なURL"
-            isLoading = false
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        
-        print("🌐 nRF Cloud API Request: GET \(urlString)")
-        print("🔑 Authorization: Bearer \(apiKey.prefix(20))...")
-        
+    /// AWS REST APIから位置情報を取得
+    private func fetchLocationFromAWS(deviceId: String) async {
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            print("🌐 AWS API: 位置情報取得開始 (deviceId: \(deviceId))")
             
-            guard let httpResponse = response as? HTTPURLResponse else {
-                errorMessage = "サーバーからの応答が無効です"
+            // デバイス情報を取得
+            let deviceResponse = try await AWSNetworkService.shared.getDevices()
+            
+            // 指定されたデバイスを探す
+            guard let device = deviceResponse.devices.first(where: { $0.deviceId == deviceId }) else {
+                errorMessage = "デバイスが見つかりません"
                 isLoading = false
                 return
             }
             
-            print("📡 nRF Cloud API Response: \(httpResponse.statusCode)")
-            
-            guard httpResponse.statusCode == 200 else {
-                let errorBody = String(data: data, encoding: .utf8) ?? "不明なエラー"
-                errorMessage = "APIエラー (\(httpResponse.statusCode)): \(errorBody)"
-                isLoading = false
-                return
-            }
-            
-            // 🔍 レスポンスの生データをログ出力
-            if let jsonString = String(data: data, encoding: .utf8) {
-                print("📦 nRF Cloud レスポンス:")
-                print(jsonString)
-            }
-            
-            // JSONパース
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                print("❌ JSON解析失敗")
-                errorMessage = "JSON解析エラー"
-                isLoading = false
-                return
-            }
-            
-            print("✅ JSON解析成功")
-            
-            guard let items = json["items"] as? [[String: Any]] else {
-                print("❌ itemsキーなし")
-                errorMessage = "GPS データなし"
-                isLoading = false
-                return
-            }
-            
-            print("📊 items要素数: \(items.count)")
-            
-            // GNSSデータのみをフィルタリング
-            let gnssItems = items.filter { item in
-                if let serviceType = item["serviceType"] as? String {
-                    return serviceType == "GNSS"
+            // 位置情報があればBusLocationに変換
+            if let location = device.lastLocation {
+                let busLocation = BusLocation(
+                    id: deviceId,
+                    latitude: location.lat,
+                    longitude: location.lon,
+                    timestamp: Timestamp(date: location.date ?? Date()),
+                    speed: nil,  // AWS APIにはspeed情報がない
+                    azimuth: nil,  // AWS APIにはazimuth情報がない
+                    fromBusstopPole: nil,
+                    toBusstopPole: nil,
+                    busOperator: "nRF Device",
+                    busRoute: deviceId
+                )
+                
+                await MainActor.run {
+                    self.currentBusLocation = busLocation
+                    self.errorMessage = nil
+                    self.isLoading = false
                 }
-                return false
-            }
-            
-            print("📡 GNSS データ数: \(gnssItems.count)/\(items.count)")
-            
-            // GNSSデータがあればそれを使用、なければ最新のデータを使用
-            guard let item = gnssItems.first ?? items.first else {
-                print("❌ items配列が空")
-                errorMessage = "GPS データなし"
-                isLoading = false
-                return
-            }
-            
-            if let serviceType = item["serviceType"] as? String {
-                print("📍 使用する測位方式: \(serviceType)")
-            }
-            
-            print("📍 取得データ:")
-            for (key, value) in item {
-                print("  \(key): \(value)")
-            }
-            
-            // タイムスタンプの処理
-            let timestamp: Timestamp
-            if let ts = item["ts"] as? String {
-                let formatter = ISO8601DateFormatter()
-                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                if let date = formatter.date(from: ts) {
-                    timestamp = Timestamp(date: date)
+                
+                print("✅ AWS API 位置情報取得成功: (\(location.lat), \(location.lon))")
+                print("📍 測位方式: \(location.source.rawValue)")
+                print("📏 精度: \(location.accuracy) m")
+                
+                // タイムスタンプを表示
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                formatter.timeZone = TimeZone.current
+                if let date = location.date {
+                    print("🕐 データの時刻: \(formatter.string(from: date))")
                 } else {
-                    timestamp = Timestamp(date: Date())
+                    print("⚠️ タイムスタンプの解析に失敗")
                 }
-            } else if let tsMillis = item["ts"] as? Int64 {
-                timestamp = Timestamp(date: Date(timeIntervalSince1970: Double(tsMillis) / 1000.0))
-            } else if let insertedAt = item["insertedAt"] as? String {
-                // insertedAtをフォールバックとして使用
-                let formatter = ISO8601DateFormatter()
-                if let date = formatter.date(from: insertedAt) {
-                    timestamp = Timestamp(date: date)
-                } else {
-                    timestamp = Timestamp(date: Date())
+                print("🕐 現在時刻: \(formatter.string(from: Date()))")
+            } else {
+                await MainActor.run {
+                    self.errorMessage = "位置情報がありません"
+                    self.isLoading = false
                 }
-            } else {
-                timestamp = Timestamp(date: Date())
-            }
-            
-            // 緯度経度の取得（文字列または数値に対応）
-            let latitude: Double
-            if let latDouble = item["lat"] as? Double {
-                latitude = latDouble
-            } else if let latString = item["lat"] as? String, let latDouble = Double(latString) {
-                latitude = latDouble
-            } else {
-                latitude = 0
-            }
-            
-            let longitude: Double
-            if let lonDouble = item["lon"] as? Double {  // ⚠️ "lng"ではなく"lon"
-                longitude = lonDouble
-            } else if let lonString = item["lon"] as? String, let lonDouble = Double(lonString) {
-                longitude = lonDouble
-            } else {
-                longitude = 0
-            }
-            
-            print("🌍 パース結果: lat=\(latitude), lon=\(longitude)")
-            
-            // BusLocationに変換
-            let busLocation = BusLocation(
-                id: UUID().uuidString,
-                latitude: latitude,
-                longitude: longitude,
-                timestamp: timestamp,
-                speed: item["spd"] as? Double,
-                azimuth: item["hdg"] as? Double,
-                fromBusstopPole: nil,
-                toBusstopPole: nil,
-                busOperator: "nRF Device",
-                busRoute: deviceID
-            )
-            
-            self.currentBusLocation = busLocation
-            self.errorMessage = nil
-            self.isLoading = false
-            
-            print("✅ nRF Cloud 位置情報取得成功: (\(busLocation.latitude), \(busLocation.longitude))")
-            
-            if let speed = busLocation.speed {
-                print("🚀 速度: \(speed.toFixed(1)) km/h")
             }
             
         } catch {
-            errorMessage = "位置情報取得エラー: \(error.localizedDescription)"
-            isLoading = false
-            print("❌ nRF Cloud API エラー: \(error)")
+            await MainActor.run {
+                self.errorMessage = "AWS API エラー: \(error.localizedDescription)"
+                self.isLoading = false
+            }
+            print("❌ AWS API エラー: \(error)")
         }
     }
     
-    /// リアルタイム監視を停止
-    func stopListening() {
-        listener?.remove()
-        listener = nil
-        nrfCloudTimer?.invalidate()
-        nrfCloudTimer = nil
-        print("🛑 バス位置監視停止")
+    /// Device IDを取得（UserDefaultsから）
+    private func getDeviceId() -> String? {
+        // nRF Cloud設定のDevice IDを使用
+        let deviceId = UserDefaults.standard.string(forKey: "nrf_device_id")
+        return deviceId?.isEmpty == false ? deviceId : nil
     }
     
     // MARK: - Safe Zone Methods
     
-    /// セーフゾーンのリアルタイム監視を開始
+    /// セーフゾーンのリアルタイム監視を開始（AWS API版）
     func startListeningSafeZones(childId: String) {
         print("🚀 セーフゾーン監視開始: childId=\(childId)")
         
-        safeZoneListener = db.collection("safe_zones")
-            .whereField("childId", isEqualTo: childId)
-            .whereField("isActive", isEqualTo: true)
-            .addSnapshotListener { [weak self] querySnapshot, error in
-                guard let self = self else { return }
-                
-                if let error = error {
-                    print("❌ セーフゾーン取得エラー: \(error)")
-                    return
-                }
-                
-                guard let documents = querySnapshot?.documents else {
-                    print("⚠️ セーフゾーンが見つかりません")
-                    self.safeZones = []
-                    return
-                }
-                
-                // ドキュメントをSafeZoneモデルに変換
-                self.safeZones = documents.compactMap { document in
-                    try? document.data(as: SafeZone.self)
-                }
-                
-                print("✅ セーフゾーン取得: \(self.safeZones.count)件")
-                for zone in self.safeZones {
-                    print("  - \(zone.name): (\(zone.center.latitude), \(zone.center.longitude)), 半径:\(zone.radius)m")
-                }
+        // AWS APIからセーフゾーンを取得
+        Task {
+            await fetchSafeZonesFromAWS(deviceId: childId)
+        }
+        
+        // 定期的にポーリング（5分ごと）
+        safeZonePollingTimer = Timer.scheduledTimer(withTimeInterval: 300.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.fetchSafeZonesFromAWS(deviceId: childId)
             }
+        }
     }
     
     /// セーフゾーン監視を停止
     func stopListeningSafeZones() {
-        safeZoneListener?.remove()
-        safeZoneListener = nil
+        safeZonePollingTimer?.invalidate()
+        safeZonePollingTimer = nil
         print("🛑 セーフゾーン監視停止")
     }
     
-    /// セーフゾーンを追加
+    /// AWS APIからセーフゾーンを取得
+    private func fetchSafeZonesFromAWS(deviceId: String) async {
+        do {
+            print("🌐 AWS API: セーフゾーン取得開始 (deviceId: \(deviceId))")
+            
+            let response = try await AWSNetworkService.shared.getSafeZones(deviceId: deviceId)
+            
+            // APISafeZone から SafeZone に変換
+            let convertedZones = response.safezones.compactMap { apiZone -> SafeZone? in
+                convertAPISafeZoneToSafeZone(apiZone, deviceId: deviceId)
+            }
+            
+            await MainActor.run {
+                self.safeZones = convertedZones
+            }
+            
+            print("✅ AWS API セーフゾーン取得成功: \(convertedZones.count)件")
+            for zone in convertedZones {
+                print("  - \(zone.name): (\(zone.centerLat), \(zone.centerLon)), 半径:\(zone.radius)m")
+            }
+            
+        } catch {
+            print("❌ AWS API セーフゾーン取得エラー: \(error)")
+        }
+    }
+    
+    /// APISafeZone を SafeZone に変換
+    private func convertAPISafeZoneToSafeZone(_ apiZone: APISafeZone, deviceId: String) -> SafeZone? {
+        return SafeZone(
+            id: apiZone.zoneId,
+            name: apiZone.name,
+            centerLat: apiZone.center.lat,
+            centerLon: apiZone.center.lon,
+            radius: apiZone.radius,
+            enabled: apiZone.enabled,
+            color: "#0000FF"  // デフォルトの青色
+        )
+    }
+    
+    /// SafeZone を SafeZoneRequest に変換
+    /// - Parameter zone: 変換するSafeZone
+    /// - Parameter isNewZone: 新規作成の場合はtrue（zoneIdをnilにする）
+    private func convertSafeZoneToAPIRequest(_ zone: SafeZone, isNewZone: Bool = false) -> SafeZoneRequest {
+        return SafeZoneRequest(
+            zoneId: isNewZone ? nil : zone.id,  // 新規作成時はnilを設定
+            name: zone.name,
+            center: Coordinate(lat: zone.centerLat, lon: zone.centerLon),
+            radius: zone.radius,
+            enabled: zone.enabled
+        )
+    }
+    
+    /// セーフゾーンを追加（AWS API版）
     func addSafeZone(_ zone: SafeZone, completion: @escaping (Result<Void, Error>) -> Void) {
-        do {
-            try db.collection("safe_zones").document(zone.id ?? UUID().uuidString).setData(from: zone) { error in
-                if let error = error {
-                    print("❌ セーフゾーン追加エラー: \(error)")
-                    completion(.failure(error))
-                } else {
-                    print("✅ セーフゾーン追加成功: \(zone.name)")
+        Task {
+            do {
+                guard let deviceId = getDeviceId() else {
+                    throw NSError(domain: "FirestoreService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Device ID is missing"])
+                }
+                
+                let request = convertSafeZoneToAPIRequest(zone, isNewZone: true)  // 新規作成フラグをtrueに
+                _ = try await AWSNetworkService.shared.putSafeZone(deviceId: deviceId, request: request)
+                
+                // 再取得
+                await fetchSafeZonesFromAWS(deviceId: deviceId)
+                
+                await MainActor.run {
                     completion(.success(()))
                 }
+            } catch {
+                await MainActor.run {
+                    completion(.failure(error))
+                }
             }
-        } catch {
-            print("❌ セーフゾーンエンコードエラー: \(error)")
-            completion(.failure(error))
         }
     }
     
-    /// セーフゾーンを更新
+    /// セーフゾーンを更新（AWS API版）
     func updateSafeZone(_ zone: SafeZone, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard let id = zone.id else {
-            completion(.failure(NSError(domain: "FirestoreService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Zone ID is missing"])))
-            return
-        }
-        
-        do {
-            try db.collection("safe_zones").document(id).setData(from: zone) { error in
-                if let error = error {
-                    print("❌ セーフゾーン更新エラー: \(error)")
-                    completion(.failure(error))
-                } else {
-                    print("✅ セーフゾーン更新成功: \(zone.name)")
+        Task {
+            do {
+                guard let deviceId = getDeviceId() else {
+                    throw NSError(domain: "FirestoreService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Device ID is missing"])
+                }
+                
+                let request = convertSafeZoneToAPIRequest(zone, isNewZone: false)  // 更新なのでfalse
+                _ = try await AWSNetworkService.shared.putSafeZone(deviceId: deviceId, request: request)
+                
+                // 再取得
+                await fetchSafeZonesFromAWS(deviceId: deviceId)
+                
+                await MainActor.run {
                     completion(.success(()))
                 }
+            } catch {
+                await MainActor.run {
+                    completion(.failure(error))
+                }
             }
-        } catch {
-            print("❌ セーフゾーンエンコードエラー: \(error)")
-            completion(.failure(error))
         }
     }
     
-    /// セーフゾーンを削除
+    /// セーフゾーンを削除（AWS API版）
     func deleteSafeZone(_ zoneId: String, completion: @escaping (Result<Void, Error>) -> Void) {
-        db.collection("safe_zones").document(zoneId).delete { error in
-            if let error = error {
-                print("❌ セーフゾーン削除エラー: \(error)")
-                completion(.failure(error))
-            } else {
-                print("✅ セーフゾーン削除成功: \(zoneId)")
-                completion(.success(()))
+        Task {
+            do {
+                guard let deviceId = getDeviceId() else {
+                    throw NSError(domain: "FirestoreService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Device ID is missing"])
+                }
+                
+                _ = try await AWSNetworkService.shared.deleteSafeZone(deviceId: deviceId, zoneId: zoneId)
+                
+                // 再取得
+                await fetchSafeZonesFromAWS(deviceId: deviceId)
+                
+                await MainActor.run {
+                    completion(.success(()))
+                }
+            } catch {
+                await MainActor.run {
+                    completion(.failure(error))
+                }
             }
         }
     }
     
-    // MARK: - Zone Event Methods
+    // MARK: - Zone Event Methods (AWS未実装のため一旦空実装)
     
-    /// 入退場イベントのリアルタイム監視を開始
+    /// 入退場イベントのリアルタイム監視を開始（AWS API実装待ち）
     func startListeningZoneEvents(childId: String, limit: Int = 100) {
         print("🚀 ZoneEventListView.task 開始: childId=\(childId)")
-        
-        zoneEventListener = db.collection("zone_events")
-            .whereField("childId", isEqualTo: childId)
-            .order(by: "timestamp", descending: true)
-            .limit(to: limit)
-            .addSnapshotListener { [weak self] querySnapshot, error in
-                guard let self = self else { return }
-                
-                if let error = error {
-                    print("❌ イベント取得エラー: \(error)")
-                    return
-                }
-                
-                guard let documents = querySnapshot?.documents else {
-                    print("⚠️ イベントが見つかりません")
-                    self.zoneEvents = []
-                    return
-                }
-                
-                // ドキュメントをZoneEventモデルに変換
-                self.zoneEvents = documents.compactMap { document in
-                    try? document.data(as: ZoneEvent.self)
-                }
-                
-                print("✅ イベント取得: \(self.zoneEvents.count)件")
-            }
+        print("⚠️ AWS APIでのZoneEvent実装待ち")
+        // TODO: AWS APIでZoneEventエンドポイントが実装されたら対応
     }
     
     /// 入退場イベント監視を停止
     func stopListeningZoneEvents() {
-        zoneEventListener?.remove()
-        zoneEventListener = nil
+        zoneEventPollingTimer?.invalidate()
+        zoneEventPollingTimer = nil
         print("🛑 入退場イベント監視停止")
     }
     
-    // MARK: - FCM Token Methods
+    // MARK: - APNs Token Methods (Firebase削除版)
         
-    /// FCMトークンを保存
+    /// APNsトークンを保存（UserDefaultsのみ、AWS連携は今後実装）
     func saveFCMToken(_ token: String, forUserId userId: String) {
-        let data: [String: Any] = [
-            "fcmToken": token,
-            "updatedAt": Timestamp(date: Date()),
-            "platform": "iOS"
-        ]
+        // UserDefaultsに保存
+        UserDefaults.standard.set(token, forKey: "apns_device_token")
+        print("✅ APNsトークン保存: \(token)")
         
-        db.collection("users").document(userId).setData(data, merge: true) { error in
-            if let error = error {
-                print("❌ FCMトークン保存エラー: \(error)")
-            } else {
-                print("✅ FCMトークン保存成功: \(token)")
-            }
-        }
+        // TODO: AWS SNS連携（今後実装）
     }
 }

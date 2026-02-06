@@ -95,13 +95,13 @@ struct ZoneEventRow: View {
                         .font(.system(size: 12))
                     
                     // 時刻
-                    Text(formatTime(event.timestamp.dateValue()))
+                    Text(formatTime(event.timestamp))
                         .font(.system(size: 15))
                         .foregroundColor(.secondary)
                 }
                 
                 // 日付
-                Text(formatDate(event.timestamp.dateValue()))
+                Text(formatDate(event.timestamp))
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
             }

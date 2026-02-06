@@ -8,10 +8,14 @@
 import SwiftUI
 
 struct NRFCloudSettingsView: View {
-    @State private var apiKey: String = NRFCloudConfig.apiKey
-    @State private var deviceID: String = NRFCloudConfig.deviceID
+    @State private var deviceID: String = UserDefaults.standard.string(forKey: "nrf_device_id") ?? ""
+    @State private var deviceName: String = UserDefaults.standard.string(forKey: "device_display_name") ?? "デバイス"
     @State private var showSaveAlert = false
     @State private var showResetAlert = false
+    
+    // AWS API設定
+    @State private var awsBaseURL: String = UserDefaults.standard.string(forKey: "aws_base_url") ?? ""
+    @State private var awsAPIKey: String = UserDefaults.standard.string(forKey: "aws_api_key") ?? ""
     
     @Environment(\.dismiss) private var dismiss
     
@@ -21,27 +25,54 @@ struct NRFCloudSettingsView: View {
                 // 設定状態セクション
                 Section {
                     HStack {
-                        Image(systemName: NRFCloudConfig.isConfigured() ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundColor(NRFCloudConfig.isConfigured() ? .green : .orange)
+                        Image(systemName: configurationStatus.isConfigured ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundColor(configurationStatus.isConfigured ? .green : .orange)
                         
-                        Text(NRFCloudConfig.isConfigured() ? "設定完了" : "未設定")
+                        Text(configurationStatus.message)
                             .fontWeight(.semibold)
                     }
                 } header: {
                     Text("設定状態")
                 }
                 
-                // API設定セクション
+                // AWS API設定セクション
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("API Key")
+                        Text("Base URL")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
-                        SecureField("API Keyを入力", text: $apiKey)
+                        TextField("https://xxx.execute-api.ap-northeast-1.amazonaws.com/dev", text: $awsBaseURL)
+                                .textFieldStyle(.roundedBorder)
+                                .autocapitalization(.none)
+                                .keyboardType(.URL)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("API Key")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            
+                            SecureField("API Keyを入力", text: $awsAPIKey)
+                                .textFieldStyle(.roundedBorder)
+                                .textContentType(.password)
+                                .autocapitalization(.none)
+                        }
+                    } header: {
+                        Text("AWS REST API設定")
+                    } footer: {
+                        Text("AWS API GatewayのエンドポイントURLとAPI Keyを入力してください。")
+                    }
+                
+                // Device ID設定
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("表示名")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        TextField("太郎", text: $deviceName)
                             .textFieldStyle(.roundedBorder)
-                            .textContentType(.password)
-                            .autocapitalization(.none)
                     }
                     
                     VStack(alignment: .leading, spacing: 8) {
@@ -49,25 +80,14 @@ struct NRFCloudSettingsView: View {
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
-                        TextField("Device IDを入力", text: $deviceID)
+                        TextField("nrf-352656100123456", text: $deviceID)
                             .textFieldStyle(.roundedBorder)
                             .autocapitalization(.none)
                     }
                 } header: {
-                    Text("nRF Cloud API設定")
+                    Text("デバイス設定")
                 } footer: {
-                    Text("nRF Cloud PortalからAPI KeyとDevice IDを取得して入力してください。")
-                }
-                
-                // 接続情報セクション
-                Section {
-                    LabeledContent("API Base URL") {
-                        Text(NRFCloudConfig.baseURL)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                } header: {
-                    Text("接続情報")
+                    Text("表示名: 地図上に表示される名前\nDevice ID: nRF Cloudデバイスの識別子（形式: nrf-{IMEI 15桁}）")
                 }
                 
                 // アクションセクション
@@ -81,7 +101,7 @@ struct NRFCloudSettingsView: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    .disabled(apiKey.isEmpty || deviceID.isEmpty)
+                    .disabled(!canSave)
                     
                     Button(role: .destructive) {
                         showResetAlert = true
@@ -97,41 +117,13 @@ struct NRFCloudSettingsView: View {
                 // 使用方法セクション
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
-                        instructionRow(
-                            number: "1",
-                            title: "nRF Cloud Portalにアクセス",
-                            description: "https://nrfcloud.com にログイン"
-                        )
-                        
-                        Divider()
-                        
-                        instructionRow(
-                            number: "2",
-                            title: "API Keyを取得",
-                            description: "Account Settings → API Keys → Create API Key"
-                        )
-                        
-                        Divider()
-                        
-                        instructionRow(
-                            number: "3",
-                            title: "Device IDを確認",
-                            description: "Devices → デバイス一覧からIDをコピー"
-                        )
-                        
-                        Divider()
-                        
-                        instructionRow(
-                            number: "4",
-                            title: "設定を保存",
-                            description: "上記フォームに入力して保存ボタンをタップ"
-                        )
+                        awsAPIInstructions
                     }
                 } header: {
                     Text("設定手順")
                 }
             }
-            .navigationTitle("nRF Cloud設定")
+            .navigationTitle("AWS API設定")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -145,7 +137,7 @@ struct NRFCloudSettingsView: View {
                     dismiss()
                 }
             } message: {
-                Text("nRF Cloudの設定が完了しました。")
+                Text("AWS REST APIの設定が完了しました。")
             }
             .alert("設定をリセットしますか?", isPresented: $showResetAlert) {
                 Button("キャンセル", role: .cancel) { }
@@ -153,8 +145,55 @@ struct NRFCloudSettingsView: View {
                     resetConfiguration()
                 }
             } message: {
-                Text("保存されたAPI KeyとDevice IDが削除されます。")
+                Text("保存された設定がすべて削除されます。")
             }
+        }
+    }
+    
+    // MARK: - Computed Properties
+    
+    private var configurationStatus: (isConfigured: Bool, message: String) {
+        let configured = !awsBaseURL.isEmpty && !awsAPIKey.isEmpty && !deviceID.isEmpty
+        return (configured, configured ? "AWS API設定完了" : "AWS API未設定")
+    }
+    
+    private var canSave: Bool {
+        return !awsBaseURL.isEmpty && !awsAPIKey.isEmpty && !deviceID.isEmpty
+    }
+    
+    // MARK: - Instruction Views
+    
+    private var awsAPIInstructions: some View {
+        Group {
+            instructionRow(
+                number: "1",
+                title: "AWS API Gatewayの設定",
+                description: "AWSコンソールからAPI GatewayのエンドポイントURLを確認"
+            )
+            
+            Divider()
+            
+            instructionRow(
+                number: "2",
+                title: "API Keyを取得",
+                description: "API Gateway → APIキー → 使用する APIキーの値をコピー"
+            )
+            
+            Divider()
+            
+            instructionRow(
+                number: "3",
+                title: "Device IDを確認",
+                description: "nRF CloudのデバイスID（形式: nrf-{IMEI}）を確認"
+            )
+            
+            Divider()
+            
+            instructionRow(
+                number: "4",
+                title: "設定を保存",
+                description: "Base URL、API Key、Device IDを入力して保存"
+            )
         }
     }
     
@@ -183,15 +222,37 @@ struct NRFCloudSettingsView: View {
     // MARK: - Actions
     
     private func saveConfiguration() {
-        NRFCloudConfig.saveAPIKey(apiKey)
-        NRFCloudConfig.saveDeviceID(deviceID)
+        // AWS API設定を保存
+        UserDefaults.standard.set(awsBaseURL, forKey: "aws_base_url")
+        UserDefaults.standard.set(awsAPIKey, forKey: "aws_api_key")
+        UserDefaults.standard.set(deviceID, forKey: "nrf_device_id")
+        UserDefaults.standard.set(deviceName, forKey: "device_display_name")
+        
+        // DataServiceのdeviceIdを更新
+        DataService.shared.deviceId = deviceID
+        
+        print("✅ AWS API設定保存完了")
+        print("   Base URL: \(awsBaseURL)")
+        print("   Device ID: \(deviceID)")
+        print("   表示名: \(deviceName)")
+        
         showSaveAlert = true
     }
     
     private func resetConfiguration() {
-        NRFCloudConfig.resetConfig()
-        apiKey = ""
+        // すべての設定をリセット
+        UserDefaults.standard.removeObject(forKey: "aws_base_url")
+        UserDefaults.standard.removeObject(forKey: "aws_api_key")
+        UserDefaults.standard.removeObject(forKey: "nrf_device_id")
+        UserDefaults.standard.removeObject(forKey: "device_display_name")
+        
+        // UIをリセット
+        awsBaseURL = ""
+        awsAPIKey = ""
         deviceID = ""
+        deviceName = "デバイス"
+        
+        print("🗑️ AWS API設定リセット完了")
     }
 }
 

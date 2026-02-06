@@ -2,29 +2,21 @@
 //  mimamoriGPSApp.swift
 //  mimamoriGPS
 //
-//  Created by 木下美樹 on 2025/10/09.
+//  AWS REST API専用 - Firebase完全削除版
 //
 
-
-
 import SwiftUI
-import FirebaseCore
-import FirebaseMessaging
-import FirebaseFirestore
+import UserNotifications
 
-class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate, MessagingDelegate {
+class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        // Firebase初期化
-        FirebaseApp.configure()
-        print("✅ Firebase initialized")
+        
+        print("✅ アプリ起動 - AWS REST API専用モード")
         
         // 通知センターのデリゲート設定
         UNUserNotificationCenter.current().delegate = self
-        
-        // Messagingのデリゲート設定
-        Messaging.messaging().delegate = self
         
         // 通知権限をリクエスト
         requestNotificationPermission(application: application)
@@ -60,10 +52,13 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     
     func application(_ application: UIApplication,
                      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        // APNsトークンを16進数文字列に変換
+        let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
         print("✅ APNsトークン登録成功")
+        print("📱 Token: \(tokenString)")
         
-        // FCMにAPNsトークンを設定
-        Messaging.messaging().apnsToken = deviceToken
+        // APNsトークンをAWS SNSに登録（AWS実装完了後に使用）
+        saveAPNsTokenToAWS(tokenString)
     }
     
     // MARK: - APNsトークン登録失敗
@@ -73,25 +68,30 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         print("❌ APNsトークン登録失敗: \(error.localizedDescription)")
     }
     
-    // MARK: - MessagingDelegate - FCMトークン受信
+    // MARK: - APNsトークンをAWSに保存
     
-    func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-        guard let fcmToken = fcmToken else {
-            print("❌ FCMトークンが取得できませんでした")
-            return
+    private func saveAPNsTokenToAWS(_ token: String) {
+        // UserDefaultsに一時保存
+        UserDefaults.standard.set(token, forKey: "apns_device_token")
+        print("💾 APNsトークンを保存: \(token.prefix(20))...")
+        
+        // AWS APIを使用してトークンを登録（今後実装）
+        Task {
+            do {
+                guard AWSNetworkService.shared.isConfigured() else {
+                    print("⚠️ AWS API未設定のため、トークン登録をスキップ")
+                    return
+                }
+                
+                // TODO: AWS側でAPNsトークン登録エンドポイントが実装されたら有効化
+                // let deviceId = UserDefaults.standard.string(forKey: "nrf_device_id") ?? ""
+                // try await AWSNetworkService.shared.registerAPNsToken(deviceId: deviceId, token: token)
+                
+                print("✅ APNsトークン登録準備完了（AWS実装待ち）")
+            } catch {
+                print("❌ APNsトークン登録エラー: \(error)")
+            }
         }
-        
-        print("✅ FCMトークン取得成功: \(fcmToken)")
-        
-        // Firestoreに保存
-        saveFCMTokenToFirestore(fcmToken: fcmToken)
-    }
-    
-    // MARK: - FCMトークンをFirestoreに保存
-    
-    private func saveFCMTokenToFirestore(fcmToken: String) {
-        FirestoreService.shared.saveFCMToken(fcmToken, forUserId: "test-child-001")
-        print("✅ FCMトークン保存を開始しました")
     }
     
     // MARK: - UNUserNotificationCenterDelegate - フォアグラウンド通知受信
@@ -102,6 +102,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         
         let userInfo = notification.request.content.userInfo
         print("📬 フォアグラウンド通知受信: \(userInfo)")
+        
+        // AWS API プッシュ通知を処理
+        PushNotificationHandler.shared.handleNotification(userInfo)
         
         // アプリ起動中でも通知を表示
         completionHandler([[.banner, .sound, .badge]])
@@ -116,6 +119,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         let userInfo = response.notification.request.content.userInfo
         print("👆 通知タップ: \(userInfo)")
         
+        // AWS API プッシュ通知を処理
+        PushNotificationHandler.shared.handleNotification(userInfo)
+        
         // 通知タップ時の処理
         handleNotificationTap(userInfo: userInfo)
         
@@ -125,14 +131,16 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     // MARK: - 通知タップ時の処理
     
     private func handleNotificationTap(userInfo: [AnyHashable: Any]) {
-        if let notificationType = userInfo["type"] as? String {
+        // dataフィールドからタイプを取得
+        if let data = userInfo["data"] as? [String: Any],
+           let notificationType = data["type"] as? String {
             print("📱 通知タイプ: \(notificationType)")
             
             switch notificationType {
-            case "zone_enter":
-                print("🟢 セーフゾーン入場通知")
-            case "zone_exit":
-                print("🔴 セーフゾーン退場通知")
+            case "ZONE_ENTER":
+                print("🟢 セーフゾーン帰還通知")
+            case "ZONE_EXIT":
+                print("🔴 セーフゾーン離脱通知")
             default:
                 print("📨 その他の通知")
             }
