@@ -20,9 +20,20 @@ struct BusLocation: Identifiable, Codable, Equatable {
     var toBusstopPole: String?
     var busOperator: String?
     var busRoute: String?
-    
+
+    /// 測位方式（GNSS / GROUND_FIX）
+    var locationSource: LocationSource
+
+    enum LocationSource: String, Codable {
+        case gnss       = "GNSS"
+        case groundFix  = "GROUND_FIX"
+    }
+
     // MARK: - Computed Properties
-    
+
+    /// GNSS 測位かどうか
+    var isGNSS: Bool { locationSource == .gnss }
+
     /// CLLocationCoordinate2D に変換
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -51,11 +62,13 @@ struct BusLocation: Identifiable, Codable, Equatable {
     }
     
     // MARK: - Equatable
-    
+    // id・座標・タイムスタンプ・測位方式が一致する場合のみ「同じ」とみなす
+    // → 座標が同じでも時刻や測位方式が変われば onChange が発火する
     static func == (lhs: BusLocation, rhs: BusLocation) -> Bool {
-        return lhs.id == rhs.id &&
-               lhs.latitude == rhs.latitude &&
-               lhs.longitude == rhs.longitude
+        return lhs.latitude == rhs.latitude &&
+               lhs.longitude == rhs.longitude &&
+               lhs.timestamp.seconds == rhs.timestamp.seconds &&
+               lhs.locationSource == rhs.locationSource
     }
 }
 

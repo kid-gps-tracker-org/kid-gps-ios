@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		EE59F9A82F3D7C87007C2DC5 /* ZoneHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE59F9A72F3D7C87007C2DC5 /* ZoneHistoryView.swift */; };
+		EE95E32C2F42D4AE00F4D3AA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE95E32B2F42D4AE00F4D3AA /* SettingsView.swift */; };
+		EE95E32E2F42E33300F4D3AA /* AWS_API_INTEGRATION 2.md in Resources */ = {isa = PBXBuildFile; fileRef = EE95E32D2F42E33300F4D3AA /* AWS_API_INTEGRATION 2.md */; };
+		EE95E3302F42E35E00F4D3AA /* README_AWS_INTEGRATION 2.md in Resources */ = {isa = PBXBuildFile; fileRef = EE95E32F2F42E35E00F4D3AA /* README_AWS_INTEGRATION 2.md */; };
 		EED4368E2F345956005990A4 /* AWS_API_INTEGRATION.md in Resources */ = {isa = PBXBuildFile; fileRef = EED4368D2F345956005990A4 /* AWS_API_INTEGRATION.md */; };
 		EED436902F345CA3005990A4 /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EED4368F2F345CA3005990A4 /* APIModels.swift */; };
 		EED436922F345CC0005990A4 /* AWSNetworkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EED436912F345CC0005990A4 /* AWSNetworkService.swift */; };
@@ -23,6 +27,10 @@
 
 /* Begin PBXFileReference section */
 		2191EA452E9790F200A536A8 /* mimamoriGPS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = mimamoriGPS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EE59F9A72F3D7C87007C2DC5 /* ZoneHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneHistoryView.swift; sourceTree = "<group>"; };
+		EE95E32B2F42D4AE00F4D3AA /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		EE95E32D2F42E33300F4D3AA /* AWS_API_INTEGRATION 2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "AWS_API_INTEGRATION 2.md"; sourceTree = "<group>"; };
+		EE95E32F2F42E35E00F4D3AA /* README_AWS_INTEGRATION 2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "README_AWS_INTEGRATION 2.md"; sourceTree = "<group>"; };
 		EED4368D2F345956005990A4 /* AWS_API_INTEGRATION.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AWS_API_INTEGRATION.md; sourceTree = "<group>"; };
 		EED4368F2F345CA3005990A4 /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
 		EED436912F345CC0005990A4 /* AWSNetworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AWSNetworkService.swift; sourceTree = "<group>"; };
@@ -58,6 +66,11 @@
 			path = mimamoriGPS;
 			sourceTree = "<group>";
 		};
+		EE92200B2F440840002D1A89 /* Specs */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Specs;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -81,6 +94,7 @@
 		2191EA3C2E9790F200A536A8 = {
 			isa = PBXGroup;
 			children = (
+				EE92200B2F440840002D1A89 /* Specs */,
 				2191EA472E9790F200A536A8 /* mimamoriGPS */,
 				2191EA462E9790F200A536A8 /* Products */,
 				2108802A2EA723350017243E /* Frameworks */,
@@ -96,6 +110,10 @@
 				EED4369F2F345EB4005990A4 /* BUILD_CHECKLIST_NO_FIREBASE.md */,
 				EED436A12F345F3D005990A4 /* DeviceLocation.swift */,
 				EED436A52F345FA5005990A4 /* COMPLETE_REMOVAL_GUIDE.md */,
+				EE59F9A72F3D7C87007C2DC5 /* ZoneHistoryView.swift */,
+				EE95E32B2F42D4AE00F4D3AA /* SettingsView.swift */,
+				EE95E32D2F42E33300F4D3AA /* AWS_API_INTEGRATION 2.md */,
+				EE95E32F2F42E35E00F4D3AA /* README_AWS_INTEGRATION 2.md */,
 			);
 			sourceTree = "<group>";
 		};
@@ -124,6 +142,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				2191EA472E9790F200A536A8 /* mimamoriGPS */,
+				EE92200B2F440840002D1A89 /* Specs */,
 			);
 			name = mimamoriGPS;
 			packageProductDependencies = (
@@ -173,7 +192,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EE95E32E2F42E33300F4D3AA /* AWS_API_INTEGRATION 2.md in Resources */,
 				EED4369A2F345D45005990A4 /* README_AWS_INTEGRATION.md in Resources */,
+				EE95E3302F42E35E00F4D3AA /* README_AWS_INTEGRATION 2.md in Resources */,
 				EED4368E2F345956005990A4 /* AWS_API_INTEGRATION.md in Resources */,
 				EED436A62F345FA5005990A4 /* COMPLETE_REMOVAL_GUIDE.md in Resources */,
 				EED4369E2F345E89005990A4 /* FIREBASE_REMOVAL_GUIDE.md in Resources */,
@@ -195,6 +216,8 @@
 				EED436942F345CD0005990A4 /* PushNotificationHandler.swift in Sources */,
 				EED436962F345CF3005990A4 /* BuildTest.swift in Sources */,
 				EED436922F345CC0005990A4 /* AWSNetworkService.swift in Sources */,
+				EE59F9A82F3D7C87007C2DC5 /* ZoneHistoryView.swift in Sources */,
+				EE95E32C2F42D4AE00F4D3AA /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -332,10 +355,12 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = RFN639G9T6;
+				DEVELOPMENT_TEAM = 67F33XFM4C;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = mimamoriGPS/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "";
+				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -346,7 +371,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.JATCO.mimamoriGPS;
+				PRODUCT_BUNDLE_IDENTIFIER = com.JATCO.mimamoriGPS.ent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -363,10 +388,12 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = RFN639G9T6;
+				DEVELOPMENT_TEAM = 67F33XFM4C;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = mimamoriGPS/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "";
+				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -377,7 +404,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.JATCO.mimamoriGPS;
+				PRODUCT_BUNDLE_IDENTIFIER = com.JATCO.mimamoriGPS.ent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;

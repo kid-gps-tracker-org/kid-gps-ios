@@ -45,18 +45,20 @@ extension Double {
     }
 }
 
+@MainActor
 class FirestoreService: ObservableObject {
     // MARK: - Published Properties
     @Published var currentBusLocation: BusLocation?
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     @Published var locationHistory: [BusLocation] = []
+    @Published var lastTemperature: Temperature?
     // MARK: - Safe Zone Properties
     @Published var safeZones: [SafeZone] = []
     @Published var zoneEvents: [ZoneEvent] = []
     
     // MARK: - Private Properties
-    private var pollingTimer: Timer?  // ポーリング用タイマー
+    private var pollingTask: Task<Void, Never>?   // 位置情報ポーリング
     private var safeZonePollingTimer: Timer?
     private var zoneEventPollingTimer: Timer?
     
@@ -67,17 +69,23 @@ class FirestoreService: ObservableObject {
     
     /// バス位置のリアルタイム監視を開始（AWS API専用）
     func startListening() {
+        // 重複起動ガード: すでにポーリング中なら isLoading をリセットするだけ
+        guard pollingTask == nil else {
+            print("⏩ AWS REST API ポーリング既に実行中 - スキップ")
+            isLoading = false
+            return
+        }
         isLoading = true
         errorMessage = nil
         
-        // 常にAWS APIからポーリング
+        // AWS APIからポーリング開始
         startAWSPolling()
     }
     
     /// リアルタイム監視を停止
     func stopListening() {
-        pollingTimer?.invalidate()
-        pollingTimer = nil
+        pollingTask?.cancel()
+        pollingTask = nil
         print("🛑 デバイス位置監視停止")
     }
     
@@ -85,7 +93,9 @@ class FirestoreService: ObservableObject {
     
     /// 指定した日付の位置履歴を取得(0時〜23時59分59秒)
     func fetchLocationHistory(for date: Date = Date()) {
-        let calendar = Calendar.current
+        // タイムゾーンを明示してカレンダーを作成
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone.current
         
         // 指定日の0時0分0秒
         let startOfDay = calendar.startOfDay(for: date)
@@ -123,15 +133,18 @@ class FirestoreService: ObservableObject {
                     limit: 1000
                 )
                 
-                // HistoryEntry → BusLocation に変換
+                // APIから返ってきたデータのタイプ内訳をログ出力
+                let typeCounts = Dictionary(grouping: response.history, by: { $0.messageType.rawValue })
+                    .mapValues(\.count)
+                print("📊 履歴データ内訳: \(typeCounts)")
+
+                // HistoryEntry → BusLocation に変換（GNSS のみ、GROUND_FIX は軌跡に含めない）
                 let busLocations = response.history.compactMap { entry -> BusLocation? in
-                    // 位置情報のみ（温度データを除外）
-                    guard entry.messageType != .temp,
+                    guard entry.messageType == .gnss,
                           let lat = entry.lat,
                           let lon = entry.lon else {
                         return nil
                     }
-                    
                     return BusLocation(
                         id: UUID().uuidString,
                         latitude: lat,
@@ -142,20 +155,23 @@ class FirestoreService: ObservableObject {
                         fromBusstopPole: nil,
                         toBusstopPole: nil,
                         busOperator: "nRF Device",
-                        busRoute: deviceId
+                        busRoute: deviceId,
+                        locationSource: .gnss
                     )
                 }
                 
-                await MainActor.run {
-                    self.locationHistory = busLocations
-                    print("✅ 履歴データ取得: \(busLocations.count)件(\(dateString))")
+                self.locationHistory = busLocations
+                print("✅ 履歴データ取得: \(busLocations.count)件(GNSS) / 全\(response.count)件(\(dateString))")
+                if busLocations.count < 2 {
+                    print("⚠️ 軌跡表示には2件以上のGNSSデータが必要です（現在\(busLocations.count)件）")
                 }
                 
             } catch {
                 print("❌ 履歴取得エラー: \(error)")
-                await MainActor.run {
-                    self.locationHistory = []
+                if let decodingError = error as? DecodingError {
+                    print("   デコードエラー詳細: \(decodingError)")
                 }
+                self.locationHistory = []
             }
         }
     }
@@ -164,6 +180,11 @@ class FirestoreService: ObservableObject {
     
     /// AWS REST APIからのポーリングを開始
     private func startAWSPolling() {
+        // 既存のタスクが動いていれば重複起動しない
+        if pollingTask != nil {
+            print("⏩ AWS REST API ポーリング既に実行中 - スキップ")
+            return
+        }
         print("🚀 AWS REST API ポーリング開始...")
         
         // 設定確認
@@ -179,17 +200,19 @@ class FirestoreService: ObservableObject {
             return
         }
         
-        // 初回取得
-        Task {
-            await fetchLocationFromAWS(deviceId: deviceId)
-        }
-        
-        // 60秒ごとにポーリング
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self = self else { return }
-                await self.fetchLocationFromAWS(deviceId: deviceId)
+        // Task ベースの無限ループでポーリング
+        // Timer.scheduledTimer と異なり RunLoop モードに依存しない
+        pollingTask = Task {
+            while !Task.isCancelled {
+                await fetchLocationFromAWS(deviceId: deviceId)
+                // キャンセルされていなければ 60 秒待機
+                do {
+                    try await Task.sleep(for: .seconds(60))
+                } catch {
+                    break  // キャンセル時に脱出
+                }
             }
+            print("🛑 AWS REST API ポーリングタスク終了")
         }
     }
     
@@ -198,42 +221,42 @@ class FirestoreService: ObservableObject {
         do {
             print("🌐 AWS API: 位置情報取得開始 (deviceId: \(deviceId))")
             
-            // デバイス情報を取得
             let deviceResponse = try await AWSNetworkService.shared.getDevices()
             
-            // 指定されたデバイスを探す
             guard let device = deviceResponse.devices.first(where: { $0.deviceId == deviceId }) else {
                 errorMessage = "デバイスが見つかりません"
                 isLoading = false
                 return
             }
             
-            // 位置情報があればBusLocationに変換
             if let location = device.lastLocation {
                 let busLocation = BusLocation(
-                    id: deviceId,
+                    id: "\(deviceId)-\(location.timestamp)",
                     latitude: location.lat,
                     longitude: location.lon,
                     timestamp: Timestamp(date: location.date ?? Date()),
-                    speed: nil,  // AWS APIにはspeed情報がない
-                    azimuth: nil,  // AWS APIにはazimuth情報がない
+                    speed: nil,
+                    azimuth: nil,
                     fromBusstopPole: nil,
                     toBusstopPole: nil,
                     busOperator: "nRF Device",
-                    busRoute: deviceId
+                    busRoute: deviceId,
+                    locationSource: location.source == .groundFix ? .groundFix : .gnss
                 )
                 
-                await MainActor.run {
-                    self.currentBusLocation = busLocation
-                    self.errorMessage = nil
-                    self.isLoading = false
-                }
+                // @MainActor クラスなのでそのまま代入できる
+                currentBusLocation = busLocation
+                lastTemperature = device.lastTemperature  // 温度を保存
+                errorMessage = nil
+                isLoading = false
                 
                 print("✅ AWS API 位置情報取得成功: (\(location.lat), \(location.lon))")
                 print("📍 測位方式: \(location.source.rawValue)")
                 print("📏 精度: \(location.accuracy) m")
+                if let temp = device.lastTemperature {
+                    print("🌡️ 温度: \(temp.value)℃")
+                }
                 
-                // タイムスタンプを表示
                 let formatter = DateFormatter()
                 formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
                 formatter.timeZone = TimeZone.current
@@ -244,17 +267,13 @@ class FirestoreService: ObservableObject {
                 }
                 print("🕐 現在時刻: \(formatter.string(from: Date()))")
             } else {
-                await MainActor.run {
-                    self.errorMessage = "位置情報がありません"
-                    self.isLoading = false
-                }
+                errorMessage = "位置情報がありません"
+                isLoading = false
             }
             
         } catch {
-            await MainActor.run {
-                self.errorMessage = "AWS API エラー: \(error.localizedDescription)"
-                self.isLoading = false
-            }
+            errorMessage = "AWS API エラー: \(error.localizedDescription)"
+            isLoading = false
             print("❌ AWS API エラー: \(error)")
         }
     }
@@ -270,6 +289,11 @@ class FirestoreService: ObservableObject {
     
     /// セーフゾーンのリアルタイム監視を開始（AWS API版）
     func startListeningSafeZones(childId: String) {
+        // 既存のタイマーが動いていれば重複起動しない
+        if safeZonePollingTimer != nil {
+            print("⏩ セーフゾーン監視既に実行中 - スキップ")
+            return
+        }
         print("🚀 セーフゾーン監視開始: childId=\(childId)")
         
         // AWS APIからセーフゾーンを取得
@@ -418,20 +442,159 @@ class FirestoreService: ObservableObject {
         }
     }
     
-    // MARK: - Zone Event Methods (AWS未実装のため一旦空実装)
-    
-    /// 入退場イベントのリアルタイム監視を開始（AWS API実装待ち）
+    // MARK: - Zone Event Methods (AWS API /history 利用)
+
+    /// 入退場イベントの監視を開始
+    /// GET /devices/{deviceId}/history から ZONE_ENTER / ZONE_EXIT を取得する。
+    /// - Parameters:
+    ///   - childId: deviceId
+    ///   - limit: 最大取得件数（デフォルト 100）
     func startListeningZoneEvents(childId: String, limit: Int = 100) {
-        print("🚀 ZoneEventListView.task 開始: childId=\(childId)")
-        print("⚠️ AWS APIでのZoneEvent実装待ち")
-        // TODO: AWS APIでZoneEventエンドポイントが実装されたら対応
+        // 既存のタイマーが動いていれば重複起動しない
+        if zoneEventPollingTimer != nil {
+            print("⏩ ZoneEvent監視既に実行中 - スキップ")
+            return
+        }
+        print("🚀 ZoneEvent監視開始: childId=\(childId), limit=\(limit)")
+
+        // 初回取得
+        Task {
+            await fetchZoneEventsFromAWS(deviceId: childId, limit: limit)
+        }
+
+        // 5分ごとにポーリング
+        zoneEventPollingTimer = Timer.scheduledTimer(withTimeInterval: 300.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.fetchZoneEventsFromAWS(deviceId: childId, limit: limit)
+            }
+        }
     }
-    
+
+    /// AWS API から ZONE_ENTER / ZONE_EXIT の履歴を取得して zoneEvents に反映する。
+    /// type パラメータが単一値しか受け付けないため、2回リクエストして結果をマージする。
+    private func fetchZoneEventsFromAWS(deviceId: String, limit: Int) async {
+        do {
+            print("🌐 AWS API: ZoneEvent取得開始 (deviceId: \(deviceId))")
+
+            // ZONE_ENTER と ZONE_EXIT をそれぞれ取得
+            async let enterResponse = AWSNetworkService.shared.getHistory(
+                deviceId: deviceId,
+                type: .zoneEnter,
+                start: nil,
+                end: nil,
+                limit: limit
+            )
+            async let exitResponse = AWSNetworkService.shared.getHistory(
+                deviceId: deviceId,
+                type: .zoneExit,
+                start: nil,
+                end: nil,
+                limit: limit
+            )
+
+            let (enters, exits) = try await (enterResponse, exitResponse)
+
+            // マージして timestamp 降順にソート
+            let merged = (enters.history + exits.history)
+                .sorted { lhs, rhs in
+                    // Date に変換して比較、変換できない場合は文字列比較（ISO 8601 は辞書順で正しく比較できる）
+                    let lhsDate = lhs.date ?? Date.distantPast
+                    let rhsDate = rhs.date ?? Date.distantPast
+                    return lhsDate > rhsDate
+                }
+                .prefix(limit)
+                .map { $0 }
+
+            // HistoryEntry を ZoneEvent に変換
+            let events = merged.compactMap { entry -> ZoneEvent? in
+                convertHistoryEntryToZoneEvent(entry, deviceId: deviceId)
+            }
+
+            await MainActor.run {
+                self.zoneEvents = events
+                print("✅ ZoneEvent取得成功: \(events.count)件（ENTER:\(enters.count) EXIT:\(exits.count)）")
+            }
+
+        } catch {
+            print("❌ ZoneEvent取得エラー: \(error)")
+        }
+    }
+
+    /// HistoryEntry（ZONE_ENTER / ZONE_EXIT）を ZoneEvent に変換
+    private func convertHistoryEntryToZoneEvent(_ entry: HistoryEntry, deviceId: String) -> ZoneEvent? {
+        guard entry.messageType == .zoneEnter || entry.messageType == .zoneExit,
+              let zoneId = entry.zoneId,
+              let zoneName = entry.zoneName,
+              let date = entry.date
+        else {
+            return nil
+        }
+
+        let eventType: ZoneEvent.EventType = (entry.messageType == .zoneEnter) ? .enter : .exit
+
+        // 位置情報がある場合は GeoPoint に変換
+        let location = GeoPoint(
+            latitude: entry.lat ?? 0.0,
+            longitude: entry.lon ?? 0.0
+        )
+
+        return ZoneEvent(
+            id: "\(deviceId)-\(entry.timestamp)",
+            safeZoneId: zoneId,
+            safeZoneName: zoneName,
+            childId: deviceId,
+            eventType: eventType,
+            timestamp: date,
+            location: location,
+            notificationSent: false
+        )
+    }
+
     /// 入退場イベント監視を停止
     func stopListeningZoneEvents() {
         zoneEventPollingTimer?.invalidate()
         zoneEventPollingTimer = nil
         print("🛑 入退場イベント監視停止")
+    }
+
+    /// 手動で最新のZoneEventを再取得する
+    func refreshZoneEvents(childId: String, limit: Int = 100) {
+        Task {
+            await fetchZoneEventsFromAWS(deviceId: childId, limit: limit)
+        }
+    }
+
+    /// AWSプッシュ通知から受け取った入退場イベントを zoneEvents の先頭に追加する。
+    /// - Parameter data: PushNotificationHandler がパースした PushNotificationData
+    /// - Note: 同一 id が既に存在する場合は重複追加しない（冪等）
+    func appendZoneEventFromPush(_ data: PushNotificationData) {
+        let eventType: ZoneEvent.EventType = (data.type == .zoneEnter) ? .enter : .exit
+        let location = GeoPoint(latitude: data.location.lat, longitude: data.location.lon)
+        let date = data.detectedDate ?? Date()
+
+        // id は "deviceId-detectedAt" で一意に識別
+        let id = "\(data.deviceId)-\(data.detectedAt)"
+
+        // 重複チェック
+        guard !zoneEvents.contains(where: { $0.id == id }) else {
+            print("⏩ 重複イベントのためスキップ: \(id)")
+            return
+        }
+
+        let event = ZoneEvent(
+            id: id,
+            safeZoneId: data.zoneId,
+            safeZoneName: data.zoneName,
+            childId: data.deviceId,
+            eventType: eventType,
+            timestamp: date,
+            location: location,
+            notificationSent: true
+        )
+
+        // 先頭に挿入（新しい順を維持）
+        zoneEvents.insert(event, at: 0)
+        print("✅ プッシュ通知からZoneEvent追加: \(event.safeZoneName) (\(eventType.rawValue))")
     }
     
     // MARK: - APNs Token Methods (Firebase削除版)

@@ -123,6 +123,44 @@ struct SafeZoneEditView: View {
                         handleMapTap(at: location, in: geometry)
                     }
                 
+                // ── 既存のセーフゾーン（編集中のゾーン自身は除く）──
+                let otherZones = firestoreService.safeZones.filter { $0.id != safeZone?.id }
+                ForEach(otherZones) { zone in
+                    let screenPoint = convertToScreenPoint(
+                        coordinate: zone.centerCoordinate,
+                        region: region,
+                        size: geometry.size
+                    )
+                    let r = metersToPixels(
+                        meters: zone.radius,
+                        region: region,
+                        screenHeight: geometry.size.height
+                    )
+                    ZStack {
+                        Circle()
+                            .fill(Color.gray.opacity(0.15))
+                            .frame(width: r * 2, height: r * 2)
+                        Circle()
+                            .stroke(Color.gray.opacity(0.5), lineWidth: 1.5)
+                            .frame(width: r * 2, height: r * 2)
+                        // ゾーン名ラベル
+                        Text(zone.name)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(.gray)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color(.systemBackground).opacity(0.8))
+                            )
+                            .offset(y: -(r + 10))
+                    }
+                    .position(screenPoint)
+                    .allowsHitTesting(false)
+                }
+                
+                // ── 編集中のゾーン（青色） ──
                 if let location = selectedLocation {
                     let screenPoint = convertToScreenPoint(
                         coordinate: location,
@@ -156,6 +194,7 @@ struct SafeZoneEditView: View {
                             )
                     }
                     .position(screenPoint)
+                    .allowsHitTesting(false)
                 }
                 
                 // タップで設定の案内

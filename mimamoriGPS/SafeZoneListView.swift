@@ -9,7 +9,7 @@ import SwiftUI
 
 struct SafeZoneListView: View {
     // MARK: - Properties
-    @StateObject private var firestoreService = FirestoreService()
+    @ObservedObject var firestoreService: FirestoreService
     @State private var showingAddSheet = false
     @State private var selectedZone: SafeZone?
     
@@ -19,50 +19,55 @@ struct SafeZoneListView: View {
     var body: some View {
         let _ = print("🔄 SafeZoneListView 再描画: \(firestoreService.safeZones.count)件")
         
-        NavigationView {
-            Group {
-                if firestoreService.safeZones.isEmpty {
-                    // 空の状態
-                    emptyStateView
-                } else {
-                    // リスト表示
-                    safeZoneList
+        Group {
+            if firestoreService.safeZones.isEmpty {
+                // 空の状態
+                emptyStateView
+            } else {
+                // リスト表示
+                safeZoneList
+            }
+        }
+        .navigationTitle("セーフゾーン")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                NavigationLink {
+                    ZoneHistoryView(childId: childId)
+                } label: {
+                    Label("履歴", systemImage: "clock.arrow.circlepath")
                 }
             }
-            .navigationTitle("セーフゾーン")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    addButton
-                }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                addButton
             }
-            .sheet(isPresented: $showingAddSheet) {
-                SafeZoneEditView(
-                    firestoreService: firestoreService,
-                    childId: childId,
-                    safeZone: nil,
-                    initialLocation: firestoreService.currentBusLocation.map { ($0.latitude, $0.longitude) }
-                )
-            }
-            .sheet(item: $selectedZone) { zone in
-                SafeZoneEditView(
-                    firestoreService: firestoreService,
-                    childId: childId,
-                    safeZone: zone,
-                    initialLocation: nil
-                )
-            }
-            .task {
-                print("🚀 SafeZoneListView.task 開始: childId=\(childId)")
-                
-                // バス位置の監視開始
-                firestoreService.startListening()
-                print("🎯 バス位置監視開始")
-                
-                // セーフゾーンの監視開始
-                firestoreService.startListeningSafeZones(childId: childId)
-                print("🎯 セーフゾーン監視開始")
-            }
+        }
+        .sheet(isPresented: $showingAddSheet) {
+            SafeZoneEditView(
+                firestoreService: firestoreService,
+                childId: childId,
+                safeZone: nil,
+                initialLocation: firestoreService.currentBusLocation.map { ($0.latitude, $0.longitude) }
+            )
+        }
+        .sheet(item: $selectedZone) { zone in
+            SafeZoneEditView(
+                firestoreService: firestoreService,
+                childId: childId,
+                safeZone: zone,
+                initialLocation: nil
+            )
+        }
+        .task {
+            print("🚀 SafeZoneListView.task 開始: childId=\(childId)")
+            
+            // バス位置の監視開始
+            firestoreService.startListening()
+            print("🎯 バス位置監視開始")
+            
+            // セーフゾーンの監視開始
+            firestoreService.startListeningSafeZones(childId: childId)
+            print("🎯 セーフゾーン監視開始")
         }
     }
     
@@ -212,6 +217,8 @@ extension Color {
 
 struct SafeZoneListView_Previews: PreviewProvider {
     static var previews: some View {
-        SafeZoneListView(childId: "test-child-001")
+        NavigationView {
+            SafeZoneListView(firestoreService: FirestoreService(), childId: "test-child-001")
+        }
     }
 }

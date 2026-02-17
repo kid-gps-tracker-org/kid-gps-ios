@@ -88,11 +88,13 @@ class PushNotificationHandler {
         print("   ゾーン: \(data.zoneName)")
         print("   タイプ: \(data.type.rawValue)")
         print("   位置: (\(data.location.lat), \(data.location.lon))")
-        
-        // 通知イベントをFirestoreに保存（既存のZoneEvent形式に変換）
-        // または、アプリ内で独自に処理
-        
-        // NotificationCenterで他の部分に通知
+
+        // FirestoreService の zoneEvents にリアルタイム反映
+        Task { @MainActor in
+            FirestoreService.shared.appendZoneEventFromPush(data)
+        }
+
+        // NotificationCenter でアプリ内の他コンポーネントにも通知
         NotificationCenter.default.post(
             name: .safeZoneEventReceived,
             object: nil,

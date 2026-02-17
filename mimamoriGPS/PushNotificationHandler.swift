@@ -32,7 +32,7 @@ class PushNotificationHandler {
         // 通知タイプを確認
         guard let typeString = data["type"] as? String,
               let type = PushNotificationData.NotificationType(rawValue: typeString) else {
-            print("⚠️ 通知タイプが不正です")
+            print("⚠️ 通知タイプが不正です: \(data["type"] ?? "nil")")
             return
         }
         

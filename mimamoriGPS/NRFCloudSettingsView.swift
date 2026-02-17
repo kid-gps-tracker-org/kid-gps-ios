@@ -20,133 +20,117 @@ struct NRFCloudSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
-        NavigationView {
-            Form {
-                // 設定状態セクション
-                Section {
+        Form {
+            // 設定状態セクション
+            Section {
+                HStack {
+                    Image(systemName: configurationStatus.isConfigured ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundColor(configurationStatus.isConfigured ? .green : .orange)
+                    Text(configurationStatus.message)
+                        .fontWeight(.semibold)
+                }
+            } header: {
+                Text("設定状態")
+            }
+
+            // AWS API設定セクション
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Base URL")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    TextField("https://xxx.execute-api.ap-northeast-1.amazonaws.com/dev", text: $awsBaseURL)
+                        .textFieldStyle(.roundedBorder)
+                        .autocapitalization(.none)
+                        .keyboardType(.URL)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("API Key")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    SecureField("API Keyを入力", text: $awsAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                        .textContentType(.password)
+                        .autocapitalization(.none)
+                }
+            } header: {
+                Text("AWS REST API設定")
+            } footer: {
+                Text("AWS API GatewayのエンドポイントURLとAPI Keyを入力してください。")
+            }
+
+            // Device ID設定
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("表示名")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    TextField("太郎", text: $deviceName)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Device ID")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    TextField("nrf-352656100123456", text: $deviceID)
+                        .textFieldStyle(.roundedBorder)
+                        .autocapitalization(.none)
+                }
+            } header: {
+                Text("デバイス設定")
+            } footer: {
+                Text("表示名: 地図上に表示される名前\nDevice ID: nRF Cloudデバイスの識別子（形式: nrf-{IMEI 15桁}）")
+            }
+
+            // アクションセクション
+            Section {
+                Button {
+                    saveConfiguration()
+                } label: {
                     HStack {
-                        Image(systemName: configurationStatus.isConfigured ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundColor(configurationStatus.isConfigured ? .green : .orange)
-                        
-                        Text(configurationStatus.message)
-                            .fontWeight(.semibold)
+                        Image(systemName: "square.and.arrow.down")
+                        Text("設定を保存")
                     }
-                } header: {
-                    Text("設定状態")
+                    .frame(maxWidth: .infinity)
                 }
-                
-                // AWS API設定セクション
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Base URL")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        TextField("https://xxx.execute-api.ap-northeast-1.amazonaws.com/dev", text: $awsBaseURL)
-                                .textFieldStyle(.roundedBorder)
-                                .autocapitalization(.none)
-                                .keyboardType(.URL)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("API Key")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            
-                            SecureField("API Keyを入力", text: $awsAPIKey)
-                                .textFieldStyle(.roundedBorder)
-                                .textContentType(.password)
-                                .autocapitalization(.none)
-                        }
-                    } header: {
-                        Text("AWS REST API設定")
-                    } footer: {
-                        Text("AWS API GatewayのエンドポイントURLとAPI Keyを入力してください。")
+                .disabled(!canSave)
+
+                Button(role: .destructive) {
+                    showResetAlert = true
+                } label: {
+                    HStack {
+                        Image(systemName: "trash")
+                        Text("設定をリセット")
                     }
-                
-                // Device ID設定
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("表示名")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        TextField("太郎", text: $deviceName)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Device ID")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        TextField("nrf-352656100123456", text: $deviceID)
-                            .textFieldStyle(.roundedBorder)
-                            .autocapitalization(.none)
-                    }
-                } header: {
-                    Text("デバイス設定")
-                } footer: {
-                    Text("表示名: 地図上に表示される名前\nDevice ID: nRF Cloudデバイスの識別子（形式: nrf-{IMEI 15桁}）")
-                }
-                
-                // アクションセクション
-                Section {
-                    Button {
-                        saveConfiguration()
-                    } label: {
-                        HStack {
-                            Image(systemName: "square.and.arrow.down")
-                            Text("設定を保存")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .disabled(!canSave)
-                    
-                    Button(role: .destructive) {
-                        showResetAlert = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "trash")
-                            Text("設定をリセット")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                }
-                
-                // 使用方法セクション
-                Section {
-                    VStack(alignment: .leading, spacing: 12) {
-                        awsAPIInstructions
-                    }
-                } header: {
-                    Text("設定手順")
+                    .frame(maxWidth: .infinity)
                 }
             }
-            .navigationTitle("AWS API設定")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") {
-                        dismiss()
-                    }
+
+            // 設定手順セクション
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    awsAPIInstructions
                 }
+            } header: {
+                Text("設定手順")
             }
-            .alert("設定を保存しました", isPresented: $showSaveAlert) {
-                Button("OK") {
-                    dismiss()
-                }
-            } message: {
-                Text("AWS REST APIの設定が完了しました。")
+        }
+        .navigationTitle("AWS API設定")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("設定を保存しました", isPresented: $showSaveAlert) {
+            Button("OK") { }
+        } message: {
+            Text("AWS REST APIの設定が完了しました。")
+        }
+        .alert("設定をリセットしますか?", isPresented: $showResetAlert) {
+            Button("キャンセル", role: .cancel) { }
+            Button("リセット", role: .destructive) {
+                resetConfiguration()
             }
-            .alert("設定をリセットしますか?", isPresented: $showResetAlert) {
-                Button("キャンセル", role: .cancel) { }
-                Button("リセット", role: .destructive) {
-                    resetConfiguration()
-                }
-            } message: {
-                Text("保存された設定がすべて削除されます。")
-            }
+        } message: {
+            Text("保存された設定がすべて削除されます。")
         }
     }
     
@@ -257,5 +241,7 @@ struct NRFCloudSettingsView: View {
 }
 
 #Preview {
-    NRFCloudSettingsView()
+    NavigationView {
+        NRFCloudSettingsView()
+    }
 }

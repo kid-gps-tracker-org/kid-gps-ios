@@ -36,7 +36,12 @@ struct MapView: View {
     @State private var hasInitializedMarker: Bool = false  // マーカー初期化済みフラグ
     
     // 初期化時に地図の中心位置を設定
-    init(selectedDate: Date, firestoreService: FirestoreService, mapCenter: Binding<CLLocationCoordinate2D>, childId: String) {
+    init(
+        selectedDate: Date,
+        firestoreService: FirestoreService,
+        mapCenter: Binding<CLLocationCoordinate2D>,
+        childId: String
+    ) {
         self.selectedDate = selectedDate
         self.firestoreService = firestoreService
         self._mapCenter = mapCenter
@@ -57,6 +62,15 @@ struct MapView: View {
             // 1. 地図（一番下）
             Map(coordinateRegion: $region)
                 .ignoresSafeArea()
+                .onChange(of: region.center.latitude) { _, _ in
+                    // 地図スクロール時に TrailOverlay / SafeZoneCircle の再描画をトリガー
+                    // region は既に @State なので変化が伝播する（念のため明示的にコピー）
+                    region = region
+                }
+                .onChange(of: region.span.latitudeDelta) { _, _ in
+                    // ズーム変化時も再描画をトリガー
+                    region = region
+                }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                     // アプリがフォアグラウンドに戻った時に地図の中心を更新
                     if let location = firestoreService.currentBusLocation {
@@ -108,7 +122,7 @@ struct MapView: View {
                     showLocationDetail = true
                 }
             )
-            .opacity(firestoreService.locationHistory.count >= 2 ? 1.0 : 0.0)
+            .opacity(firestoreService.locationHistory.count >= 1 ? 1.0 : 0.0)
             .animation(.none)
             .transition(.identity)
             .transaction { transaction in
@@ -116,17 +130,26 @@ struct MapView: View {
                 transaction.animation = nil
             }
             
-            // 4. 現在位置の丸マーカー（軌跡の上）- アニメーション対応
+            // 4. 現在位置マーカー（測位方式によって表示を切り替え）
             if let location = firestoreService.currentBusLocation,
                Calendar.current.isDateInToday(selectedDate),
                hasInitializedMarker {
                 GeometryReader { geometry in
-                    // 現在位置マーカー
-                    BusMarker(color: animatedColor)
-                        .position(animatedScreenPosition)
-                        .onChange(of: animatedCoordinate.latitude) { _, _ in
-                            // 座標が変更された時、画面座標を再計算（アニメーション付き）
-                            withAnimation(.easeInOut(duration: 1.2)) {
+                    if location.isGNSS {
+                        // --- GNSS: 人アイコンマーカー ---
+                        BusMarker(color: animatedColor)
+                            .position(animatedScreenPosition)
+                            .onChange(of: animatedCoordinate.latitude) { _, _ in
+                                withAnimation(.easeInOut(duration: 1.2)) {
+                                    animatedScreenPosition = convertToScreenPoint(
+                                        latitude: animatedCoordinate.latitude,
+                                        longitude: animatedCoordinate.longitude,
+                                        region: region,
+                                        size: geometry.size
+                                    )
+                                }
+                            }
+                            .onChange(of: region.center.latitude) { _, _ in
                                 animatedScreenPosition = convertToScreenPoint(
                                     latitude: animatedCoordinate.latitude,
                                     longitude: animatedCoordinate.longitude,
@@ -134,60 +157,43 @@ struct MapView: View {
                                     size: geometry.size
                                 )
                             }
-                            print("🔄 animatedCoordinate変更 -> 画面座標再計算: \(animatedScreenPosition)")
-                            print("   座標: (\(animatedCoordinate.latitude), \(animatedCoordinate.longitude))")
-                        }
-                        .onChange(of: region.center.latitude) { _, _ in
-                            // 地図が動いた時は、緯度経度から画面座標を再計算（アニメーションなし）
-                            animatedScreenPosition = convertToScreenPoint(
-                                latitude: animatedCoordinate.latitude,
-                                longitude: animatedCoordinate.longitude,
-                                region: region,
-                                size: geometry.size
-                            )
-                            print("🗺️ region.center.latitude変更 -> 画面座標再計算: \(animatedScreenPosition)")
-                            print("   isMapRecentering: \(isMapRecentering)")
-                        }
-                        .onChange(of: region.center.longitude) { _, _ in
-                            // 地図が動いた時は、緯度経度から画面座標を再計算（アニメーションなし）
-                            animatedScreenPosition = convertToScreenPoint(
-                                latitude: animatedCoordinate.latitude,
-                                longitude: animatedCoordinate.longitude,
-                                region: region,
-                                size: geometry.size
-                            )
-                            print("🗺️ region.center.longitude変更 -> 画面座標再計算: \(animatedScreenPosition)")
-                            print("   isMapRecentering: \(isMapRecentering)")
-                        }
-                        .onChange(of: geometry.size) { _, newSize in
-                            // ジオメトリサイズが変わった時も再計算
-                            animatedScreenPosition = convertToScreenPoint(
-                                latitude: animatedCoordinate.latitude,
-                                longitude: animatedCoordinate.longitude,
-                                region: region,
-                                size: newSize
-                            )
-                            print("📐 geometry.size変更 -> 画面座標再計算: \(animatedScreenPosition), newSize: \(newSize)")
-                        }
-                        .onAppear {
-                            // 初回表示時に画面座標を計算（GeometryReaderのサイズを使用）
-                            animatedScreenPosition = convertToScreenPoint(
-                                latitude: animatedCoordinate.latitude,
-                                longitude: animatedCoordinate.longitude,
-                                region: region,
-                                size: geometry.size
-                            )
-                            print("📍 BusMarker.onAppear - 画面座標を初期化:")
-                            print("   位置: (\(animatedCoordinate.latitude), \(animatedCoordinate.longitude))")
-                            print("   画面座標: \(animatedScreenPosition)")
-                            print("   geometry.size: \(geometry.size)")
-                            print("   region.center: (\(region.center.latitude), \(region.center.longitude))")
-                            print("   region.span: (\(region.span.latitudeDelta), \(region.span.longitudeDelta))")
-                        }
+                            .onChange(of: region.center.longitude) { _, _ in
+                                animatedScreenPosition = convertToScreenPoint(
+                                    latitude: animatedCoordinate.latitude,
+                                    longitude: animatedCoordinate.longitude,
+                                    region: region,
+                                    size: geometry.size
+                                )
+                            }
+                            .onChange(of: geometry.size) { _, newSize in
+                                animatedScreenPosition = convertToScreenPoint(
+                                    latitude: animatedCoordinate.latitude,
+                                    longitude: animatedCoordinate.longitude,
+                                    region: region,
+                                    size: newSize
+                                )
+                            }
+                            .onAppear {
+                                animatedScreenPosition = convertToScreenPoint(
+                                    latitude: animatedCoordinate.latitude,
+                                    longitude: animatedCoordinate.longitude,
+                                    region: region,
+                                    size: geometry.size
+                                )
+                            }
+                    } else {
+                        // --- GROUND_FIX: 居場所の可能性円 ---
+                        GroundFixCircle(
+                            coordinate: animatedCoordinate,
+                            region: region,
+                            geometry: geometry
+                        )
+                        .onChange(of: region.center.latitude) { _, _ in }  // 再描画トリガー
+                        .onChange(of: region.center.longitude) { _, _ in }
+                    }
                 }
                 .allowsHitTesting(false)
             } else {
-                // デバッグ用：なぜ表示されないかを確認
                 let _ = print("❌ 現在位置マーカー非表示理由:")
                 let _ = print("   currentBusLocation: \(firestoreService.currentBusLocation != nil ? "あり" : "なし")")
                 let _ = print("   isDateInToday: \(Calendar.current.isDateInToday(selectedDate))")
@@ -196,13 +202,12 @@ struct MapView: View {
             
             // 5. 上部の情報表示のみ
             VStack {
-                // デバッグ情報を追加
                 if firestoreService.isLoading {
                     LoadingView()
                 } else if let error = firestoreService.errorMessage {
                     ErrorView(message: error)
                 } else if let location = firestoreService.currentBusLocation {
-                    BusInfoCard(location: location)
+                    BusInfoCard(location: location, temperature: firestoreService.lastTemperature)
                 } else {
                     // データが取得できていない場合
                     VStack(spacing: 8) {
@@ -222,7 +227,7 @@ struct MapView: View {
                     )
                     .padding()
                 }
-                
+
                 Spacer()
             }
             
@@ -240,16 +245,36 @@ struct MapView: View {
         .onAppear {
             print("🎬 MapView.onAppear - 開始")
             
+            // startListening / startListeningSafeZones は内部で重複起動ガード済み
+            // → タブを切り替えて戻っても二重ポーリングにはならない
             firestoreService.startListening()
-            firestoreService.fetchLocationHistory(for: selectedDate)
             firestoreService.startListeningSafeZones(childId: childId)
+            
+            // 軌跡を取得（タブに戻るたびに最新データを反映）
+            firestoreService.fetchLocationHistory(for: selectedDate)
             
             // 地図の中心位置を監視するタイマーを開始
             startMapCenterMonitoring()
         }
+        .onChange(of: selectedDate) { _, newDate in
+            // 日付が変わった時だけ軌跡を再取得
+            firestoreService.fetchLocationHistory(for: newDate)
+        }
+        .onChange(of: firestoreService.locationHistory) { _, newHistory in
+            // 軌跡データが届いたとき、現在位置がまだ未取得なら軌跡の最新点に地図を移動
+            guard firestoreService.currentBusLocation == nil,
+                  let latest = newHistory.last else { return }
+            let center = CLLocationCoordinate2D(
+                latitude: latest.latitude,
+                longitude: latest.longitude
+            )
+            print("🗺️ 現在位置未取得のため軌跡の最新点に地図を移動: (\(latest.latitude), \(latest.longitude))")
+            region.center = center
+            mapCenter = center
+        }
         .onDisappear {
-            firestoreService.stopListening()
-            firestoreService.stopListeningSafeZones()
+            // ポーリングはタブを離れても継続する（他タブでも位置情報を最新に保つため）
+            // 地図UI専用のタイマーのみ停止
             stopMapCenterMonitoring()
         }
         .onChange(of: firestoreService.currentBusLocation) { oldLocation, newLocation in
@@ -263,6 +288,16 @@ struct MapView: View {
                     latitude: location.latitude,
                     longitude: location.longitude
                 )
+
+                // 位置座標が変化した、かつ今日のデータを表示中であれば軌跡を再取得
+                // （アプリ再起動なしに軌跡が積み上がっていくようにする）
+                let coordinateChanged = oldLocation == nil
+                    || abs((oldLocation?.latitude ?? 0) - location.latitude) > 0.000001
+                    || abs((oldLocation?.longitude ?? 0) - location.longitude) > 0.000001
+                if coordinateChanged && location.isGNSS && Calendar.current.isDateInToday(selectedDate) {
+                    print("📍 GNSS位置変化を検知 → 軌跡を再取得")
+                    firestoreService.fetchLocationHistory(for: selectedDate)
+                }
                 
                 // 前回位置を更新（アニメーション用）
                 self.previousLocation = oldLocation
@@ -402,18 +437,15 @@ struct MapView: View {
 
 // MARK: - Supporting Views
 
-/// バスマーカー（点滅なし）
+/// GNSS 用：人アイコンマーカー（点滅なし）
 struct BusMarker: View {
     let color: Color
     
     var body: some View {
-        ZStack{
-            // メインの円
+        ZStack {
             Circle()
                 .fill(color)
                 .frame(width: 30, height: 30)
-
-            // 人型アイコン
             Image(systemName: "person.fill")
                 .foregroundColor(.white)
                 .font(.system(size: 14))
@@ -423,15 +455,76 @@ struct BusMarker: View {
                 .stroke(Color.white, lineWidth: 2)
                 .frame(width: 30, height: 30)
         )
-        .frame(width: 30, height: 30)  // 影の前にサイズを固定
+        .frame(width: 30, height: 30)
         .shadow(radius: 3)
+    }
+}
+
+/// GROUND_FIX 用：居場所の可能性を示す半透明の円
+struct GroundFixCircle: View {
+    let coordinate: CLLocationCoordinate2D
+    let region: MKCoordinateRegion
+    let geometry: GeometryProxy
+
+    /// セルラー測位の典型的な精度（約 500〜1000 m）を画面ピクセルに換算
+    private var radiusInPoints: CGFloat {
+        // 経度方向の 1 度あたりのピクセル数
+        let pointsPerLonDegree = geometry.size.width / region.span.longitudeDelta
+        // 約 500 m を経度差に換算（緯度によって変わるが、日本では 1° ≒ 91 km）
+        let metersPerLonDegree = 111_320.0 * cos(coordinate.latitude * .pi / 180)
+        let lonDeltaFor500m = 500.0 / metersPerLonDegree
+        return CGFloat(lonDeltaFor500m) * pointsPerLonDegree
+    }
+
+    private var center: CGPoint {
+        let centerLat = region.center.latitude
+        let centerLon = region.center.longitude
+        let spanLat = region.span.latitudeDelta
+        let spanLon = region.span.longitudeDelta
+        let x = geometry.size.width  * (0.5 + (coordinate.longitude - centerLon) / spanLon)
+        let y = geometry.size.height * (0.5 - (coordinate.latitude  - centerLat) / spanLat)
+        return CGPoint(x: x, y: y)
+    }
+
+    var body: some View {
+        ZStack {
+            // 外枠（ストローク）
+            Circle()
+                .stroke(Color.orange.opacity(0.8), lineWidth: 2)
+                .frame(width: radiusInPoints * 2, height: radiusInPoints * 2)
+
+            // 塗りつぶし（半透明）
+            Circle()
+                .fill(Color.orange.opacity(0.15))
+                .frame(width: radiusInPoints * 2, height: radiusInPoints * 2)
+
+            // 中心の小ドット
+            Circle()
+                .fill(Color.orange.opacity(0.7))
+                .frame(width: 10, height: 10)
+
+            // ラベル
+            VStack(spacing: 2) {
+                Spacer().frame(height: radiusInPoints + 6)
+                Text("圏内にいる可能性")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(Color(.systemBackground).opacity(0.85))
+                    )
+            }
+        }
+        .position(center)
     }
 }
 
 /// バス情報カード
 struct BusInfoCard: View {
     let location: BusLocation
-    
+    var temperature: Temperature?
+
     // 設定から表示名を取得
     private var deviceDisplayName: String {
         UserDefaults.standard.string(forKey: "device_display_name") ?? "デバイス"
@@ -457,14 +550,54 @@ struct BusInfoCard: View {
             return "最新"
         }
     }
+
+    // 温度に応じた色
+    private func temperatureColor(_ value: Double) -> Color {
+        switch value {
+        case ..<10:  return .blue    // 寒い
+        case ..<25:  return .green   // 適温
+        case ..<30:  return .orange  // やや暑い
+        default:     return .red     // 暑い
+        }
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Image(systemName: "person.fill")
-                    .foregroundColor(.blue)
+                Image(systemName: location.isGNSS ? "person.fill" : "antenna.radiowaves.left.and.right")
+                    .foregroundColor(location.isGNSS ? .blue : .orange)
                 Text(deviceDisplayName)
                     .font(.headline)
+                Spacer()
+                // 測位方式バッジ
+                Text(location.isGNSS ? "GPS" : "セルラー")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundColor(location.isGNSS ? .blue : .orange)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill((location.isGNSS ? Color.blue : Color.orange).opacity(0.15))
+                    )
+            }
+
+            // セルラー測位の注意書き
+            if !location.isGNSS {
+                HStack(spacing: 4) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundColor(.orange)
+                        .font(.caption)
+                    Text("屋内にいる可能性があります（概算位置を表示中）")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.orange.opacity(0.1))
+                )
             }
             
             // データ更新警告
@@ -485,9 +618,8 @@ struct BusInfoCard: View {
                 )
             }
             
-            // 時刻と速度を横並びに配置
+            // 時刻・速度・温度を横並びに配置
             HStack {
-                // 時刻
                 HStack(spacing: 4) {
                     Image(systemName: "clock.fill")
                         .foregroundColor(.gray)
@@ -497,8 +629,18 @@ struct BusInfoCard: View {
                 }
                 
                 Spacer()
+
+                // 温度
+                if let temp = temperature {
+                    HStack(spacing: 3) {
+                        Image(systemName: "thermometer.medium")
+                            .foregroundColor(temperatureColor(temp.value))
+                        Text(String(format: "%.1f℃", temp.value))
+                            .font(.subheadline)
+                            .foregroundColor(temperatureColor(temp.value))
+                    }
+                }
                 
-                // 速度（存在する場合）
                 if let speed = location.speed {
                     HStack(spacing: 4) {
                         Image(systemName: "speedometer")
@@ -529,7 +671,7 @@ struct BusInfoCard: View {
 
 /// ローディング表示
 struct LoadingView: View {
-    @State private var loadingText = "バス位置を取得中"
+    @State private var loadingText = "GPS位置取得中"
     @State private var dotCount = 0
     @State private var timer: Timer?
     
@@ -618,39 +760,49 @@ struct TrailOverlay: View {
     let locations: [BusLocation]
     let onTapLocation: (BusLocation) -> Void
     
-    // 隣接する位置データのペアを作成
-    private var locationPairs: [(current: BusLocation, next: BusLocation, index: Int)] {
-        guard locations.count >= 2 else { return [] }
-        
-        return (0..<locations.count - 1).map { index in
-            (current: locations[index], next: locations[index + 1], index: index)
+    // 各位置データに方位角を付与した表示用データを作成
+    // 次の点がある場合はその方向を、最後の1点は直前の点からの方向を使う
+    private var locationItems: [(location: BusLocation, azimuth: Double, index: Int)] {
+        guard !locations.isEmpty else { return [] }
+
+        return locations.indices.map { index in
+            let azimuth: Double
+            if index < locations.count - 1 {
+                // 次の点が存在する → 次点への方位角
+                azimuth = calculateAzimuth(from: locations[index], to: locations[index + 1])
+            } else if locations.count >= 2 {
+                // 最後の点 → 直前の点からの方位角を使い回す
+                azimuth = calculateAzimuth(from: locations[index - 1], to: locations[index])
+            } else {
+                // 1点のみ → 向き不明のため0（北向き）
+                azimuth = 0
+            }
+            return (location: locations[index], azimuth: azimuth, index: index)
         }
     }
-    
+
     var body: some View {
         GeometryReader { geometry in
-            // データが不十分な場合は何も表示しない
-            if locationPairs.isEmpty {
+            // データがない場合は何も表示しない
+            if locationItems.isEmpty {
                 EmptyView()
             } else {
                 // 軌跡上の各ポイントにマーカー
-                ForEach(locationPairs, id: \.index) { pair in
-                    let azimuth = calculateAzimuth(from: pair.current, to: pair.next)
-                    
+                ForEach(locationItems, id: \.index) { item in
                     // 時間ベースで透過度を計算
-                    let opacity = calculateOpacity(location: pair.current)
-                    
+                    let opacity = calculateOpacity(location: item.location)
+
                     HalfCircleMarker(
-                        azimuth: azimuth,
+                        azimuth: item.azimuth,
                         opacity: opacity,
-                        color: pair.current.markerColor
+                        color: item.location.markerColor
                     )
                     .frame(width: 44, height: 44)  // タップ領域を拡大
                     .contentShape(Rectangle())      // 透明部分もタップ可能に
                     .position(
                         convertToScreenPoint(
-                            latitude: pair.current.latitude,
-                            longitude: pair.current.longitude,
+                            latitude: item.location.latitude,
+                            longitude: item.location.longitude,
                             region: region,
                             size: geometry.size
                         )
@@ -662,7 +814,7 @@ struct TrailOverlay: View {
                         transaction.animation = nil
                     }
                     .onTapGesture {
-                        onTapLocation(pair.current)
+                        onTapLocation(item.location)
                     }
                 }
                 .animation(.none)

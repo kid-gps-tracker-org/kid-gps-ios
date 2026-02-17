@@ -68,6 +68,19 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         print("❌ APNsトークン登録失敗: \(error.localizedDescription)")
     }
     
+    // MARK: - バックグラウンド / キルド状態でのリモート通知受信
+    // Info.plist の UIBackgroundModes に "remote-notification" が必要
+
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        print("📬 バックグラウンド通知受信")
+
+        PushNotificationHandler.shared.handleNotification(userInfo)
+
+        completionHandler(.newData)
+    }
+    
     // MARK: - APNsトークンをAWSに保存
     
     private func saveAPNsTokenToAWS(_ token: String) {
@@ -139,8 +152,12 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
             switch notificationType {
             case "ZONE_ENTER":
                 print("🟢 セーフゾーン帰還通知")
+                // イベント履歴タブへ遷移するよう通知
+                NotificationCenter.default.post(name: .navigateToZoneHistory, object: nil)
             case "ZONE_EXIT":
                 print("🔴 セーフゾーン離脱通知")
+                // イベント履歴タブへ遷移するよう通知
+                NotificationCenter.default.post(name: .navigateToZoneHistory, object: nil)
             default:
                 print("📨 その他の通知")
             }
@@ -158,3 +175,10 @@ struct mimamoriGPSApp: App {
         }
     }
 }
+// MARK: - Notification Name Extension
+
+extension Notification.Name {
+    /// 通知タップ時にイベント履歴タブへ遷移を促す通知
+    static let navigateToZoneHistory = Notification.Name("navigateToZoneHistory")
+}
+

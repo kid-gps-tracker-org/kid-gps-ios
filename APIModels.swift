@@ -19,8 +19,40 @@ struct Location: Codable, Equatable {
     let timestamp: String  // ISO 8601
     
     enum LocationSource: String, Codable {
-        case gnss = "GNSS"
+        case gnss      = "GNSS"
         case groundFix = "GROUND_FIX"
+    }
+
+    // MARK: - カスタムデコード
+    // source フィールドに未知の値が来てもデコードエラーにしない
+
+    enum CodingKeys: String, CodingKey {
+        case lat, lon, accuracy, source, timestamp
+    }
+
+    init(lat: Double, lon: Double, accuracy: Double, source: LocationSource, timestamp: String) {
+        self.lat = lat
+        self.lon = lon
+        self.accuracy = accuracy
+        self.source = source
+        self.timestamp = timestamp
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lat       = try c.decode(Double.self, forKey: .lat)
+        lon       = try c.decode(Double.self, forKey: .lon)
+        accuracy  = try c.decode(Double.self, forKey: .accuracy)
+        timestamp = try c.decode(String.self, forKey: .timestamp)
+
+        // source が未知の値でも "GNSS" フォールバックしてデコードを継続
+        let rawSource = try c.decode(String.self, forKey: .source)
+        if let parsed = LocationSource(rawValue: rawSource) {
+            source = parsed
+        } else {
+            print("⚠️ Location.source 未知の値: '\(rawSource)' → .gnss にフォールバック")
+            source = .gnss
+        }
     }
     
     /// CLLocationCoordinate2Dに変換
@@ -118,11 +150,22 @@ struct HistoryEntry: Codable, Equatable {
     let lon: Double?
     let accuracy: Double?
     let temperature: Double?
+    let zoneId: String?    // ZONE_ENTER / ZONE_EXIT のみ値あり
+    let zoneName: String?  // ZONE_ENTER / ZONE_EXIT のみ値あり
     
     enum MessageType: String, Codable {
         case gnss = "GNSS"
         case groundFix = "GROUND_FIX"
         case temp = "TEMP"
+        case zoneEnter = "ZONE_ENTER"
+        case zoneExit = "ZONE_EXIT"
+        case unknown  // 未知の値をデコードエラーにしないためのフォールバック
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+            self = MessageType(rawValue: raw) ?? .unknown
+        }
     }
     
     /// タイムスタンプをDateに変換
