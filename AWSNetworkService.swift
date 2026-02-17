@@ -83,7 +83,25 @@ class AWSNetworkService {
         
         // 成功レスポンスのデコード
         let decoder = JSONDecoder()
-        return try decoder.decode(T.self, from: data)
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch let decodingError as DecodingError {
+            // デコードエラーの詳細をログ出力
+            switch decodingError {
+            case .typeMismatch(let type, let context):
+                print("❌ DecodingError.typeMismatch: type=\(type), path=\(context.codingPath.map(\.stringValue).joined(separator: ".")), \(context.debugDescription)")
+            case .valueNotFound(let type, let context):
+                print("❌ DecodingError.valueNotFound: type=\(type), path=\(context.codingPath.map(\.stringValue).joined(separator: ".")), \(context.debugDescription)")
+            case .keyNotFound(let key, let context):
+                print("❌ DecodingError.keyNotFound: key=\(key.stringValue), path=\(context.codingPath.map(\.stringValue).joined(separator: ".")), \(context.debugDescription)")
+            case .dataCorrupted(let context):
+                print("❌ DecodingError.dataCorrupted: path=\(context.codingPath.map(\.stringValue).joined(separator: ".")), \(context.debugDescription)")
+            @unknown default:
+                print("❌ DecodingError.unknown: \(decodingError)")
+            }
+            print("📄 Raw JSON:\n\(String(data: data, encoding: .utf8) ?? "n/a")")
+            throw decodingError
+        }
     }
     
     // MARK: - 4.1 GET /devices

@@ -24,15 +24,13 @@ struct SettingsView: View {
     @ObservedObject var firestoreService: FirestoreService
     let childId: String
 
-    // AWS設定状態
-    private var isAWSConfigured: Bool {
-        AWSNetworkService.shared.isConfigured()
-    }
+    // NavigationLink から戻ったときも最新値を反映するため @State で持つ
+    @State private var isAWSConfigured = AWSNetworkService.shared.isConfigured()
 
     var body: some View {
         NavigationView {
             List {
-                // ── デバイス・通知 ──
+                // ── みまもり設定 ──
                 Section {
                     NavigationLink {
                         SafeZoneListView(
@@ -56,6 +54,10 @@ struct SettingsView: View {
                 Section {
                     NavigationLink {
                         NRFCloudSettingsView()
+                            .onDisappear {
+                                // 設定画面から戻ったら状態を更新
+                                isAWSConfigured = AWSNetworkService.shared.isConfigured()
+                            }
                     } label: {
                         SettingsRow(
                             icon: "antenna.radiowaves.left.and.right",
@@ -85,6 +87,10 @@ struct SettingsView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.large)
+            .onAppear {
+                // タブを切り替えて戻るたびに最新の設定状態を反映
+                isAWSConfigured = AWSNetworkService.shared.isConfigured()
+            }
         }
     }
 

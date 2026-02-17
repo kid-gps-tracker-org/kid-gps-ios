@@ -15,16 +15,16 @@ struct HalfCircleMarker: View {
     
     var body: some View {
         ZStack {
-            // 色付き半分（進行方向側）- 速度で色が変わる
-            Circle()
-                .trim(from: 0.5, to: 1.0)
-                .fill(color.opacity(opacity))
-                .frame(width: 12, height: 12)
-                        
             // グレー半分（後ろ側）
             Circle()
-                .trim(from: 0.0, to: 0.5)
+                .trim(from: 0.5, to: 1.0)
                 .fill(Color.gray.opacity(0.4))
+                .frame(width: 12, height: 12)
+
+            // 色付き半分（進行方向側）- 速度で色が変わる
+            Circle()
+                .trim(from: 0.0, to: 0.5)
+                .fill(color.opacity(opacity))
                 .frame(width: 12, height: 12)
             
             // 白い境界線

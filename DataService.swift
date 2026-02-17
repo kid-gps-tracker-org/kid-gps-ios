@@ -15,6 +15,7 @@ class DataService: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     @Published var locationHistory: [HistoryEntry] = []
+    @Published var zoneHistory: [HistoryEntry] = []     // ZONE_ENTER / ZONE_EXIT の履歴
     @Published var safeZones: [APISafeZone] = []
     @Published var device: Device?
     
@@ -118,7 +119,7 @@ class DataService: ObservableObject {
         }
     }
     
-    /// 履歴データを取得
+    /// 履歴データを取得（位置・温度）
     func fetchHistory(
         type: HistoryEntry.MessageType? = nil,
         start: Date? = nil,
@@ -151,6 +152,59 @@ class DataService: ObservableObject {
                 self.errorMessage = "履歴取得エラー: \(error.localizedDescription)"
             }
             print("❌ 履歴取得エラー: \(error)")
+        }
+    }
+
+    /// セーフゾーン入退場履歴を取得（ZONE_ENTER + ZONE_EXIT）
+    /// - Parameters:
+    ///   - start: 開始時刻（省略時: 24時間前）
+    ///   - end:   終了時刻（省略時: 現在時刻）
+    ///   - limit: 1種別あたりの最大件数（デフォルト 100）
+    func fetchZoneHistory(
+        start: Date? = nil,
+        end: Date? = nil,
+        limit: Int = 100
+    ) async {
+        guard let deviceId = deviceId else {
+            errorMessage = "Device IDが設定されていません"
+            return
+        }
+
+        do {
+            print("🌐 AWS API: セーフゾーン履歴取得中...")
+
+            // ZONE_ENTER と ZONE_EXIT を並行取得
+            async let enterResponse = AWSNetworkService.shared.getHistory(
+                deviceId: deviceId,
+                type: .zoneEnter,
+                start: start,
+                end: end,
+                limit: limit
+            )
+            async let exitResponse = AWSNetworkService.shared.getHistory(
+                deviceId: deviceId,
+                type: .zoneExit,
+                start: start,
+                end: end,
+                limit: limit
+            )
+
+            let (enters, exits) = try await (enterResponse, exitResponse)
+
+            // マージして timestamp 降順にソート
+            let merged = (enters.history + exits.history)
+                .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+
+            await MainActor.run {
+                self.zoneHistory = merged
+                print("✅ セーフゾーン履歴取得成功: \(merged.count)件（ENTER:\(enters.count) EXIT:\(exits.count)）")
+            }
+
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "セーフゾーン履歴取得エラー: \(error.localizedDescription)"
+            }
+            print("❌ セーフゾーン履歴取得エラー: \(error)")
         }
     }
     

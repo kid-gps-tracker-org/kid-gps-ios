@@ -114,8 +114,8 @@ extension DeviceLocation {
             source = .gnss
         case .groundFix:
             source = .groundFix
-        case .temp:
-            return nil  // 温度データは位置情報ではない
+        case .temp, .zoneEnter, .zoneExit, .unknown:
+            return nil  // 温度・ゾーンイベント・未知タイプは位置情報ではない
         }
         
         self.id = deviceId.isEmpty ? UUID().uuidString : "\(deviceId)-\(historyEntry.timestamp)"

@@ -15,6 +15,23 @@ struct ZoneHistoryView: View {
 
     @StateObject private var dataService = DataService.shared
     @State private var isRefreshing = false
+    @State private var selectedDate: Date = Calendar.current.startOfDay(for: Date())
+
+    // MARK: - Computed Properties
+
+    /// 選択日の開始時刻（日本時間 00:00:00 → UTC に変換）
+    private var startOfSelectedDay: Date {
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        return calendar.startOfDay(for: selectedDate)
+    }
+
+    /// 選択日の終了時刻（日本時間 翌日 00:00:00 → UTC に変換）
+    private var endOfSelectedDay: Date {
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        return calendar.date(byAdding: .day, value: 1, to: startOfSelectedDay)!
+    }
 
     // MARK: - Body
 
@@ -40,8 +57,14 @@ struct ZoneHistoryView: View {
                 .disabled(isRefreshing)
             }
         }
+        .safeAreaInset(edge: .top) {
+            datePicker
+        }
         .task {
-            await dataService.fetchZoneHistory()
+            await fetchForSelectedDate()
+        }
+        .onChange(of: selectedDate) {
+            Task { await fetchForSelectedDate() }
         }
         .alert("エラー", isPresented: Binding(
             get: { dataService.errorMessage != nil },
@@ -54,6 +77,25 @@ struct ZoneHistoryView: View {
     }
 
     // MARK: - Subviews
+
+    /// 日付選択ピッカー
+    private var datePicker: some View {
+        VStack(spacing: 0) {
+            DatePicker(
+                "日付",
+                selection: $selectedDate,
+                in: ...Date(),
+                displayedComponents: .date
+            )
+            .datePickerStyle(.compact)
+            .labelsHidden()
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            Divider()
+        }
+        .background(.bar)
+    }
 
     /// ローディング表示
     private var loadingView: some View {
@@ -104,9 +146,16 @@ struct ZoneHistoryView: View {
 
     // MARK: - Methods
 
+    private func fetchForSelectedDate() async {
+        await dataService.fetchZoneHistory(
+            start: startOfSelectedDay,
+            end: endOfSelectedDay
+        )
+    }
+
     private func refresh() async {
         isRefreshing = true
-        await dataService.fetchZoneHistory()
+        await fetchForSelectedDate()
         isRefreshing = false
     }
 }
@@ -163,19 +212,19 @@ struct ZoneHistoryRow: View {
     // MARK: - Computed Properties
 
     private var iconName: String {
-        entry.messageType == .ZONE_ENTER ? "arrow.down.circle.fill" : "arrow.up.circle.fill"
+        entry.messageType == .zoneEnter ? "arrow.down.circle.fill" : "arrow.up.circle.fill"
     }
 
     private var iconBackgroundColor: Color {
-        entry.messageType == .ZONE_ENTER ? .green : .orange
+        entry.messageType == .zoneEnter ? .green : .orange
     }
 
     private var eventLabel: String {
         let zoneName = entry.zoneName ?? "不明なゾーン"
         switch entry.messageType {
-        case .ZONE_ENTER:
+        case .zoneEnter:
             return "「\(zoneName)」に入場"
-        case .ZONE_EXIT:
+        case .zoneExit:
             return "「\(zoneName)」から退場"
         default:
             return zoneName

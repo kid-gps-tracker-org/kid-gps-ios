@@ -16,14 +16,11 @@ struct ContentView: View {
     // FirestoreServiceを共有するために
     @StateObject private var firestoreService = FirestoreService()
     
-    // AWS設定画面の表示
-    @State private var showAWSSettings = false
-    
     // デバッグ用のエラー状態
     @State private var debugError: String?
     
-    // AWS設定状態を監視
-    @State private var isAWSConfigured = false
+    // 設定タブを離れるたびにインクリメント → SettingsView を強制再生成
+    @State private var settingsResetID = 0
     
     // Device IDを取得（設定から）
     private var deviceId: String {
@@ -96,10 +93,10 @@ struct ContentView: View {
                 mapCenter: $mapCenter,
                 childId: deviceId
             )
-            .transition(.identity)  // トランジション無効化
-            .animation(nil)  // アニメーション無効化
+            .transition(.identity)
+            .animation(nil)
             .transaction { transaction in
-                transaction.disablesAnimations = true  // 地図タブの全アニメーション強制無効化
+                transaction.disablesAnimations = true
             }
                 .tabItem {
                     Label {
@@ -113,7 +110,7 @@ struct ContentView: View {
                 .tag(1)
             
             // イベント履歴タブ
-            ZoneEventListView(childId: deviceId)
+            ZoneEventListView(firestoreService: firestoreService, childId: deviceId, selectedDate: $selectedDate)
                 .tabItem {
                     Label {
                         Text("履歴")
@@ -125,14 +122,15 @@ struct ContentView: View {
                 }
                 .tag(2)
             
-            // セーフゾーンタブ
-            SafeZoneListView(childId: deviceId)
+            // 設定タブ（セーフゾーン + AWS API設定などをまとめたハブ）
+            SettingsView(firestoreService: firestoreService, childId: deviceId)
+                .id(settingsResetID)
                 .tabItem {
                     Label {
-                        Text("セーフゾーン")
+                        Text("設定")
                             .font(.system(size: 11, weight: selectedTab == 3 ? .bold : .medium))
                     } icon: {
-                        Image(systemName: selectedTab == 3 ? "shield.fill" : "shield")
+                        Image(systemName: selectedTab == 3 ? "gearshape.fill" : "gearshape")
                             .font(.system(size: 24, weight: .medium))
                     }
                 }
@@ -143,59 +141,22 @@ struct ContentView: View {
             .transaction { transaction in
                 transaction.disablesAnimations = true  // 全てのアニメーションを無効化
             }
+            .onChange(of: selectedTab) { _, newTab in
+                // 設定タブ(3)から離れたら ID をインクリメント → 次回表示時にトップへリセット
+                if newTab != 3 {
+                    settingsResetID += 1
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .navigateToZoneHistory)) { _ in
+                // 通知タップ時にイベント履歴タブ(2)へ自動遷移
+                selectedTab = 2
+            }
             .onAppear {
                 print("========================================")
                 print("🚀 ContentView が表示されました")
                 print("========================================")
-                // AWS設定状態を確認
-                updateAWSConfigurationStatus()
                 // AWS API接続テスト
                 testAWSConnection()
-            }
-            .sheet(isPresented: $showAWSSettings) {
-                NRFCloudSettingsView()
-                    .onDisappear {
-                        // 設定画面を閉じた後、設定状態を再確認
-                        updateAWSConfigurationStatus()
-                        testAWSConnection()
-                    }
-            }
-            
-            // AWS設定ボタンをZStackで最前面に配置（セーフゾーンタブ以外で表示）
-            if selectedTab != 3 {
-                VStack {
-                    HStack {
-                        Spacer()
-                        
-                        Button {
-                            showAWSSettings = true
-                        } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 50, height: 50)
-                                    .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 2)
-                                
-                                VStack(spacing: 2) {
-                                    Image(systemName: "gearshape.fill")
-                                        .font(.system(size: 24))
-                                        .foregroundColor(isAWSConfigured ? .blue : .orange)
-                                    
-                                    if !isAWSConfigured {
-                                        Image(systemName: "exclamationmark.circle.fill")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(.red)
-                                            .offset(x: 10, y: -8)
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.trailing, 16)
-                        .padding(.top, 8)
-                    }
-                    
-                    Spacer()
-                }
             }
             
             // デバッグ情報を最前面に表示
@@ -218,12 +179,6 @@ struct ContentView: View {
     
     // MARK: - AWS Connection Test
     
-    /// AWS設定状態を更新
-    private func updateAWSConfigurationStatus() {
-        isAWSConfigured = AWSNetworkService.shared.isConfigured()
-        print("🔧 AWS設定状態: \(isAWSConfigured ? "設定済み" : "未設定")")
-    }
-    
     /// AWS接続をテストして問題を診断
     private func testAWSConnection() {
         print("🔍 AWS API接続テスト開始...")
@@ -231,7 +186,6 @@ struct ContentView: View {
         // AWS API設定チェック
         if AWSNetworkService.shared.isConfigured() {
             print("✅ AWS API が設定されています")
-            firestoreService.startListening()
         } else {
             debugError = "AWS APIが設定されていません"
             print("⚠️ AWS API未設定")

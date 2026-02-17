@@ -9,15 +9,35 @@ import SwiftUI
 
 struct ZoneEventListView: View {
     // MARK: - Properties
-    @StateObject private var firestoreService = FirestoreService()
+
+    /// ContentView から共有インスタンスを受け取る（独自生成しない）
+    @ObservedObject var firestoreService: FirestoreService
     
     let childId: String
-    
+
+    /// 表示する日付（ContentView の selectedDate と同期）
+    @Binding var selectedDate: Date
+
+    // MARK: - Computed Properties
+
+    /// 選択日でフィルタリングされたイベント一覧
+    private var filteredEvents: [ZoneEvent] {
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone.current
+        let startOfDay = calendar.startOfDay(for: selectedDate)
+        guard let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) else {
+            return []
+        }
+        return firestoreService.zoneEvents.filter { event in
+            event.timestamp >= startOfDay && event.timestamp < endOfDay
+        }
+    }
+
     // MARK: - Body
     var body: some View {
         NavigationView {
             Group {
-                if firestoreService.zoneEvents.isEmpty {
+                if filteredEvents.isEmpty {
                     // 空の状態
                     emptyStateView
                 } else {
@@ -27,14 +47,38 @@ struct ZoneEventListView: View {
             }
             .navigationTitle("イベント履歴")
             .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .top) {
+                datePicker
+            }
             .task {
                 print("🚀 ZoneEventListView.task 開始: childId=\(childId)")
-                firestoreService.startListeningZoneEvents(childId: childId, limit: 100)
+                // startListeningZoneEvents は内部で重複起動ガード済み
+                firestoreService.startListeningZoneEvents(childId: childId, limit: 500)
             }
             .onDisappear {
                 print("🛑 ZoneEventListView 終了")
             }
         }
+    }
+
+    // MARK: - Date Picker
+
+    private var datePicker: some View {
+        VStack(spacing: 0) {
+            DatePicker(
+                "日付",
+                selection: $selectedDate,
+                in: ...Date(),
+                displayedComponents: .date
+            )
+            .datePickerStyle(.compact)
+            .labelsHidden()
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            Divider()
+        }
+        .background(.bar)
     }
     
     // MARK: - Empty State View
@@ -61,7 +105,7 @@ struct ZoneEventListView: View {
     
     private var eventList: some View {
         List {
-            ForEach(firestoreService.zoneEvents) { event in
+            ForEach(filteredEvents) { event in
                 ZoneEventRow(event: event)
             }
         }
@@ -148,6 +192,10 @@ struct ZoneEventRow: View {
 
 struct ZoneEventListView_Previews: PreviewProvider {
     static var previews: some View {
-        ZoneEventListView(childId: "test-child-001")
+        ZoneEventListView(
+            firestoreService: FirestoreService(),
+            childId: "test-child-001",
+            selectedDate: .constant(Date())
+        )
     }
 }
